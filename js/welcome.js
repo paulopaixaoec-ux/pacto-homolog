@@ -72,9 +72,18 @@
       const term = String(q || '').trim().slice(0, 60);
       if (term.length < 2) return [];
       try {
-        const j = await getJSON(GEO + '?name=' + encodeURIComponent(term) + '&count=6&language=pt&format=json');
-        return (j && Array.isArray(j.results) ? j.results : []).filter((c) => Number.isFinite(c.latitude) && Number.isFinite(c.longitude) && c.name)
+        const j = await getJSON(GEO + '?name=' + encodeURIComponent(term) + '&count=12&language=pt&format=json');
+        const raw = (j && Array.isArray(j.results) ? j.results : []).filter((c) => Number.isFinite(c.latitude) && Number.isFinite(c.longitude) && c.name)
           .map((c) => ({ name: String(c.name), admin1: c.admin1 ? String(c.admin1) : '', country: c.country ? String(c.country) : '', country_code: c.country_code ? String(c.country_code) : '', latitude: c.latitude, longitude: c.longitude }));
+        const seen = new Set(); const out = [];
+        for (const c of raw) {
+          const place = (c.name + '|' + c.admin1 + '|' + (c.country_code || c.country)).toLowerCase();
+          const coord = Number(c.latitude).toFixed(2) + ',' + Number(c.longitude).toFixed(2);
+          if (seen.has('p:' + place) || seen.has('c:' + coord)) continue;
+          seen.add('p:' + place); seen.add('c:' + coord); out.push(c);
+          if (out.length === 6) break;
+        }
+        return out;
       } catch (e) { return null; }
     }
     /* devolve { tempC, code, text, at, cached } ou null (indisponível) */
