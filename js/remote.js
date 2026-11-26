@@ -121,14 +121,15 @@
         return (sess && sess.refresh_token) ? sess : null;
       } catch { return null; }
     }
-    async function recoverSession(minLeftSec = 0) {
+    async function recoverSession(minLeftSec = 0, force = false) {
       let s = null, getErr = null;
       try {
         const { data, error } = await sb.auth.getSession();
         s = data && data.session; getErr = error || null;
         if (s) rememberAuth(s);
       } catch (e) { getErr = e; }
-      if (s && s.expires_at && s.expires_at - Math.floor(Date.now() / 1000) > minLeftSec) return s;
+      // force: o servidor já recusou este token (401) — renova mesmo que o relógio do aparelho diga que ainda vale
+      if (!force && s && s.expires_at && s.expires_at - Math.floor(Date.now() / 1000) > minLeftSec) return s;
       const hint = s || heldRefresh();
       let r;
       try {
@@ -192,8 +193,10 @@
         let e = e0;
         // token vencido ou recusado: renova a sessão e repete UMA vez; se não renovar, pede login de novo
         if (e && (e.code === 'TOKEN_EXPIRED' || e.code === 'UNAUTHENTICATED') && e.httpStatus === 401) {
-          const s1 = await recoverSession(0);
-          if (s1 && s1.access_token) {
+          const before = e.sentToken;
+          const s1 = await recoverSession(0, true);
+          // só repete se a renovação trouxe um token NOVO (reenviar o mesmo token recusado não adianta)
+          if (s1 && s1.access_token && s1.access_token !== before) {
             try { return await invokeOnce(method, args); } catch (e2) { e = e2; }
           } else {
             throw new PactoError('UNAUTHENTICATED', 'Sua sessão terminou. Entre novamente.');
@@ -222,6 +225,7 @@
       if (!res.ok || !body || body.error) {
         const e = (body && body.error) || {};
         const pe = new PactoError(e.code || 'SERVER', e.message || 'O servidor recusou a operação (' + res.status + ').'); pe.httpStatus = res.status;
+        if (res.status === 401) Object.defineProperty(pe, 'sentToken', { value: session.access_token, enumerable: false });
         throw pe;
       }
       return body.result;

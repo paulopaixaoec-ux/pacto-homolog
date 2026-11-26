@@ -1,6 +1,13 @@
 /* PACTO 8.0 + 8.1 · aplicação (views + roteador). Toda leitura/escrita passa por PactoAPI, que aplica as regras de acesso. */
 (function () {
   'use strict';
+  // PRB-03 (homologação): anti-clickjacking. O GitHub Pages não envia X-Frame-Options/frame-ancestors (e a CSP em <meta>
+  // não aceita frame-ancestors), então o app se recusa a rodar dentro de iframe de outro site.
+  if (window.top !== window.self) {
+    document.documentElement.hidden = true;
+    try { window.top.location.replace(window.self.location.href); } catch (e) { /* topo de outra origem/sandbox: fica oculto */ }
+    return;
+  }
   const C = window.PactoCore, U = window.UI, Seed = window.PactoSeed;
   const { h, icon, t, money, date, dateShort, toast, sheet, closeSheet, pill, field, seg, toggle, progress, ring, empty, avatar } = U;
   const clock = { now: () => new Date() };

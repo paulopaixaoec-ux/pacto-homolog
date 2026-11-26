@@ -16,6 +16,12 @@
   const MAX_CENTS = 10_000_000_000;
   const isInt = (v) => Number.isSafeInteger(v) && Math.abs(v) <= MAX_CENTS;
   const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+  // PRB-02: pagamento não pode ter data futura (tolerância de 1 dia sobre a data UTC do registro, por causa de fusos)
+  function paidInFuture(paidAt, at) {
+    const ref = Date.parse(at || '');
+    if (!ref) return false; // sem carimbo de tempo confiável (ex.: testes de núcleo) não há referência de "hoje"
+    return String(paidAt) > new Date(ref + 864e5).toISOString().slice(0, 10);
+  }
   function isISODate(s) {
     if (typeof s !== 'string' || !ISO_DATE.test(s)) return false;
     const [y, m, d] = s.split('-').map(Number);
@@ -312,6 +318,7 @@
     if (!attachment || !attachment.fileId || !attachment.sha256) fail('VALIDATION', 'O comprovante (PDF ou imagem) é obrigatório.');
     if (!isInt(amountCents) || amountCents <= 0 || amountCents > remainingOf(s)) fail('VALIDATION', 'Valor informado inválido para esta parcela.');
     if (!isISODate(paidAt)) fail('VALIDATION', 'Data do pagamento inválida.');
+    if (paidInFuture(paidAt, at)) fail('VALIDATION', 'A data do pagamento não pode ser no futuro.');
     const r = { id: reportId, by: userId, at, amountCents, paidAt, comment: cleanText(comment, 400), attachment: { ...attachment }, status: 'review', locked: false };
     s.reports.push(r); s.status = 'review';
     return r;
@@ -409,6 +416,7 @@
     if (e.status !== 'accepted') fail('CONFLICT', 'A antecipação precisa estar aceita pelas duas partes.');
     if (!attachment || !attachment.fileId || !attachment.sha256) fail('VALIDATION', 'O comprovante (PDF ou imagem) é obrigatório.');
     if (!isISODate(paidAt)) fail('VALIDATION', 'Data do pagamento inválida.');
+    if (paidInFuture(paidAt, at)) fail('VALIDATION', 'A data do pagamento não pode ser no futuro.');
     const r = { id: reportId, by: userId, at, amountCents: e.netCents, paidAt, comment: cleanText(comment, 400), attachment: { ...attachment }, status: 'review', locked: false };
     e.reports.push(r); e.status = 'review';
     return r;
