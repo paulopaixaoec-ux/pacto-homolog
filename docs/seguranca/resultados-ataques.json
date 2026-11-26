@@ -1,0 +1,923 @@
+{
+ "gerado_em": "2026-11-25 (horário de Brasília)",
+ "projeto": "pacto-homolog-br",
+ "ataques": [
+  {
+   "area": "JWT",
+   "attack": "função · payload trocado (sub=Ana, aal2 forjado)",
+   "expected": "401",
+   "got": "401 UNAUTHENTICATED",
+   "pass": true
+  },
+  {
+   "area": "JWT",
+   "attack": "PostgREST · payload trocado (sub=Ana, aal2 forjado)",
+   "expected": "401",
+   "got": "401",
+   "pass": true
+  },
+  {
+   "area": "JWT",
+   "attack": "função · alg=none",
+   "expected": "401",
+   "got": "401 UNAUTHENTICATED",
+   "pass": true
+  },
+  {
+   "area": "JWT",
+   "attack": "PostgREST · alg=none",
+   "expected": "401",
+   "got": "401",
+   "pass": true
+  },
+  {
+   "area": "JWT",
+   "attack": "função · exp alterado",
+   "expected": "401",
+   "got": "401 TOKEN_EXPIRED",
+   "pass": true
+  },
+  {
+   "area": "JWT",
+   "attack": "PostgREST · exp alterado",
+   "expected": "401",
+   "got": "401",
+   "pass": true
+  },
+  {
+   "area": "JWT",
+   "attack": "função · lixo",
+   "expected": "401",
+   "got": "401 UNAUTHENTICATED",
+   "pass": true
+  },
+  {
+   "area": "JWT",
+   "attack": "PostgREST · lixo",
+   "expected": "401",
+   "got": "401",
+   "pass": true
+  },
+  {
+   "area": "Sessão",
+   "attack": "token revogado na função",
+   "expected": "401",
+   "got": "401 UNAUTHENTICATED",
+   "pass": true
+  },
+  {
+   "area": "Sessão",
+   "attack": "token revogado no PostgREST até expirar (limite conhecido)",
+   "expected": "401 ou só dados da própria Carla",
+   "got": "200 linhas=10",
+   "pass": true
+  },
+  {
+   "area": "CORS",
+   "attack": "preflight de https://evil.example",
+   "expected": "Allow-Origin ≠ evil",
+   "got": "https://paulopaixaoec-ux.github.io",
+   "pass": true
+  },
+  {
+   "area": "CORS",
+   "attack": "preflight do GitHub Pages",
+   "expected": "Allow-Origin = github.io",
+   "got": "https://paulopaixaoec-ux.github.io",
+   "pass": true
+  },
+  {
+   "area": "CORS",
+   "attack": "POST sem token de outra origem",
+   "expected": "401",
+   "got": "401",
+   "pass": true
+  },
+  {
+   "area": "IDOR",
+   "attack": "Carla → propose no acordo de Ana/Bruno",
+   "expected": "403/404",
+   "got": "400 VALIDATION",
+   "pass": true
+  },
+  {
+   "area": "IDOR",
+   "attack": "Carla → respond no acordo de Ana/Bruno",
+   "expected": "403/404",
+   "got": "404 NOT_FOUND",
+   "pass": true
+  },
+  {
+   "area": "IDOR",
+   "attack": "Carla → reportPayment no acordo de Ana/Bruno",
+   "expected": "403/404",
+   "got": "404 NOT_FOUND",
+   "pass": true
+  },
+  {
+   "area": "IDOR",
+   "attack": "Carla → reviewPayment no acordo de Ana/Bruno",
+   "expected": "403/404",
+   "got": "404 NOT_FOUND",
+   "pass": true
+  },
+  {
+   "area": "IDOR",
+   "attack": "Carla → addNote no acordo de Ana/Bruno",
+   "expected": "403/404",
+   "got": "404 NOT_FOUND",
+   "pass": true
+  },
+  {
+   "area": "IDOR",
+   "attack": "Carla → muteAgreement no acordo de Ana/Bruno",
+   "expected": "403/404",
+   "got": "404 NOT_FOUND",
+   "pass": true
+  },
+  {
+   "area": "IDOR",
+   "attack": "Carla → proposeDelay no acordo de Ana/Bruno",
+   "expected": "403/404",
+   "got": "404 NOT_FOUND",
+   "pass": true
+  },
+  {
+   "area": "IDOR",
+   "attack": "Carla → proposeEarly no acordo de Ana/Bruno",
+   "expected": "403/404",
+   "got": "404 NOT_FOUND",
+   "pass": true
+  },
+  {
+   "area": "IDOR",
+   "attack": "Carla → getFile no acordo de Ana/Bruno",
+   "expected": "403/404",
+   "got": "404 NOT_FOUND",
+   "pass": true
+  },
+  {
+   "area": "IDOR",
+   "attack": "Carla → auditLog no acordo de Ana/Bruno",
+   "expected": "403/404",
+   "got": "404 NOT_FOUND",
+   "pass": true
+  },
+  {
+   "area": "IDOR",
+   "attack": "Carla marca como lida notificação da Ana",
+   "expected": "sem efeito",
+   "got": "read=false",
+   "pass": true
+  },
+  {
+   "area": "Mass assignment",
+   "attack": "createAgreement com sellerId/status/schedule/id forjados",
+   "expected": "vendedor=Ana, proposto, id próprio",
+   "got": "true proposed true",
+   "pass": true
+  },
+  {
+   "area": "Mass assignment",
+   "attack": "updateProfile com id/email/emailVerified forjados",
+   "expected": "e-mail e id intactos; canais externos desligados",
+   "got": "true true email=false",
+   "pass": true
+  },
+  {
+   "area": "Valores",
+   "attack": "createAgreement total negativo",
+   "expected": "VALIDATION",
+   "got": "400 VALIDATION",
+   "pass": true
+  },
+  {
+   "area": "Valores",
+   "attack": "createAgreement total zero",
+   "expected": "VALIDATION",
+   "got": "400 VALIDATION",
+   "pass": true
+  },
+  {
+   "area": "Valores",
+   "attack": "createAgreement total fracionado",
+   "expected": "VALIDATION",
+   "got": "400 VALIDATION",
+   "pass": true
+  },
+  {
+   "area": "Valores",
+   "attack": "createAgreement total gigante",
+   "expected": "VALIDATION",
+   "got": "400 VALIDATION",
+   "pass": true
+  },
+  {
+   "area": "Valores",
+   "attack": "createAgreement total texto",
+   "expected": "VALIDATION",
+   "got": "400 VALIDATION",
+   "pass": true
+  },
+  {
+   "area": "Valores",
+   "attack": "createAgreement parcelas 0",
+   "expected": "VALIDATION",
+   "got": "400 VALIDATION",
+   "pass": true
+  },
+  {
+   "area": "Valores",
+   "attack": "createAgreement parcelas 10000",
+   "expected": "VALIDATION",
+   "got": "400 VALIDATION",
+   "pass": true
+  },
+  {
+   "area": "Valores",
+   "attack": "createAgreement juros negativo",
+   "expected": "VALIDATION",
+   "got": "400 VALIDATION",
+   "pass": true
+  },
+  {
+   "area": "Valores",
+   "attack": "createAgreement juros 1000%",
+   "expected": "VALIDATION",
+   "got": "400 VALIDATION",
+   "pass": true
+  },
+  {
+   "area": "Valores",
+   "attack": "reportPayment valor negativo",
+   "expected": "VALIDATION",
+   "got": "400 VALIDATION",
+   "pass": true
+  },
+  {
+   "area": "Valores",
+   "attack": "reportPayment valor fracionado",
+   "expected": "VALIDATION",
+   "got": "400 VALIDATION",
+   "pass": true
+  },
+  {
+   "area": "Valores",
+   "attack": "reportPayment acima do saldo",
+   "expected": "VALIDATION",
+   "got": "400 VALIDATION",
+   "pass": true
+  },
+  {
+   "area": "Valores",
+   "attack": "reportPayment overflow",
+   "expected": "VALIDATION",
+   "got": "400 VALIDATION",
+   "pass": true
+  },
+  {
+   "area": "Valores",
+   "attack": "proposeEarly desconto 0%",
+   "expected": "VALIDATION",
+   "got": "400 VALIDATION",
+   "pass": true
+  },
+  {
+   "area": "Valores",
+   "attack": "proposeEarly desconto 71%",
+   "expected": "VALIDATION",
+   "got": "400 VALIDATION",
+   "pass": true
+  },
+  {
+   "area": "Valores",
+   "attack": "proposeEarly desconto 0.5%",
+   "expected": "VALIDATION",
+   "got": "400 VALIDATION",
+   "pass": true
+  },
+  {
+   "area": "Valores",
+   "attack": "proposeEarly desconto -10%",
+   "expected": "VALIDATION",
+   "got": "400 VALIDATION",
+   "pass": true
+  },
+  {
+   "area": "Valores",
+   "attack": "proposeEarly desconto 100%",
+   "expected": "VALIDATION",
+   "got": "400 VALIDATION",
+   "pass": true
+  },
+  {
+   "area": "Valores",
+   "attack": "proposeEarly desconto 50%",
+   "expected": "VALIDATION",
+   "got": "400 VALIDATION",
+   "pass": true
+  },
+  {
+   "area": "Valores",
+   "attack": "proposeEarly desconto 1e+300%",
+   "expected": "VALIDATION",
+   "got": "400 VALIDATION",
+   "pass": true
+  },
+  {
+   "area": "Upload",
+   "attack": "SVG com script",
+   "expected": "recusado",
+   "got": "400 VALIDATION",
+   "pass": true
+  },
+  {
+   "area": "Upload",
+   "attack": "HTML como PDF",
+   "expected": "recusado",
+   "got": "400 VALIDATION",
+   "pass": true
+  },
+  {
+   "area": "Upload",
+   "attack": "PDF poliglota com <script>",
+   "expected": "recusado",
+   "got": "400 VALIDATION",
+   "pass": true
+  },
+  {
+   "area": "Upload",
+   "attack": "PNG verdadeiro declarado PDF",
+   "expected": "recusado",
+   "got": "400 VALIDATION",
+   "pass": true
+  },
+  {
+   "area": "Upload",
+   "attack": "extensão .exe com conteúdo PDF",
+   "expected": "recusado",
+   "got": "400 VALIDATION",
+   "pass": true
+  },
+  {
+   "area": "Upload",
+   "attack": "extensão .html com conteúdo PDF",
+   "expected": "recusado",
+   "got": "400 VALIDATION",
+   "pass": true
+  },
+  {
+   "area": "Upload",
+   "attack": "acima de 1,5 MB",
+   "expected": "recusado",
+   "got": "400 VALIDATION",
+   "pass": true
+  },
+  {
+   "area": "Upload",
+   "attack": "nome \"../../../etc/passwd.pdf\"",
+   "expected": "bloqueado (WAF do Supabase) ou nome saneado",
+   "got": "403 sem código PACTO",
+   "pass": true
+  },
+  {
+   "area": "Upload",
+   "attack": "nome com ../ e \\ (path traversal)",
+   "expected": "nome saneado; caminho = acordo/arquivo",
+   "got": "a_._._recibo.pdf | agr_«id»/file_«id»",
+   "pass": true
+  },
+  {
+   "area": "Replay",
+   "attack": "primeira aprovação (com TOTP)",
+   "expected": "ok",
+   "got": "ok",
+   "pass": true
+  },
+  {
+   "area": "Replay",
+   "attack": "mesma aprovação de novo",
+   "expected": "IMMUTABLE/CONFLICT",
+   "got": "IMMUTABLE",
+   "pass": true
+  },
+  {
+   "area": "Replay",
+   "attack": "reaceitar versão já aceita",
+   "expected": "CONFLICT",
+   "got": "CONFLICT",
+   "pass": true
+  },
+  {
+   "area": "Replay",
+   "attack": "valor pago da parcela 1",
+   "expected": "= valor da parcela (sem dobrar)",
+   "got": "30000",
+   "pass": true
+  },
+  {
+   "area": "MFA",
+   "attack": "aceite com sessão aal1 (fator cadastrado)",
+   "expected": "403 MFA_REQUIRED",
+   "got": "403 MFA_REQUIRED",
+   "pass": true
+  },
+  {
+   "area": "MFA",
+   "attack": "variação \"ACCEPT\" para fugir da regra",
+   "expected": "403 MFA_REQUIRED",
+   "got": "403 MFA_REQUIRED",
+   "pass": true
+  },
+  {
+   "area": "MFA",
+   "attack": "Carla (sem fator) aceita a própria proposta",
+   "expected": "403 MFA_ENROLL_REQUIRED",
+   "got": "403 MFA_ENROLL_REQUIRED",
+   "pass": true
+  },
+  {
+   "area": "MFA",
+   "attack": "código TOTP errado",
+   "expected": "BAD_CODE",
+   "got": "BAD_CODE",
+   "pass": true
+  },
+  {
+   "area": "MFA",
+   "attack": "termos após tentativas",
+   "expected": "inalterados (90000)",
+   "got": "90000",
+   "pass": true
+  },
+  {
+   "area": "MFA",
+   "attack": "recusar não exige MFA",
+   "expected": "200",
+   "got": "200",
+   "pass": true
+  },
+  {
+   "area": "Realtime",
+   "attack": "Carla escutando agreements/events/notifications",
+   "expected": "0 eventos",
+   "got": "0",
+   "pass": true
+  },
+  {
+   "area": "Realtime",
+   "attack": "Bruno (parte) escutando agreements",
+   "expected": "≥1 evento",
+   "got": "1",
+   "pass": true
+  },
+  {
+   "area": "Storage",
+   "attack": "bruno baixa pelo caminho",
+   "expected": "erro",
+   "got": "erro",
+   "pass": true
+  },
+  {
+   "area": "Storage",
+   "attack": "bruno gera link assinado próprio (1 h)",
+   "expected": "erro",
+   "got": "erro",
+   "pass": true
+  },
+  {
+   "area": "Storage",
+   "attack": "bruno lista a pasta do acordo",
+   "expected": "vazio/erro",
+   "got": "n=0",
+   "pass": true
+  },
+  {
+   "area": "Storage",
+   "attack": "bruno sobrescreve comprovante",
+   "expected": "erro",
+   "got": "erro",
+   "pass": true
+  },
+  {
+   "area": "Storage",
+   "attack": "bruno apaga comprovante",
+   "expected": "nada apagado",
+   "got": "n=0",
+   "pass": true
+  },
+  {
+   "area": "Storage",
+   "attack": "carla baixa pelo caminho",
+   "expected": "erro",
+   "got": "erro",
+   "pass": true
+  },
+  {
+   "area": "Storage",
+   "attack": "carla gera link assinado próprio (1 h)",
+   "expected": "erro",
+   "got": "erro",
+   "pass": true
+  },
+  {
+   "area": "Storage",
+   "attack": "carla lista a pasta do acordo",
+   "expected": "vazio/erro",
+   "got": "n=0",
+   "pass": true
+  },
+  {
+   "area": "Storage",
+   "attack": "carla sobrescreve comprovante",
+   "expected": "erro",
+   "got": "erro",
+   "pass": true
+  },
+  {
+   "area": "Storage",
+   "attack": "carla apaga comprovante",
+   "expected": "nada apagado",
+   "got": "n=0",
+   "pass": true
+  },
+  {
+   "area": "Storage",
+   "attack": "arquivo continua íntegro após ataques (SHA-256)",
+   "expected": "íntegro",
+   "got": "true",
+   "pass": true
+  },
+  {
+   "area": "Storage",
+   "attack": "URL pública do bucket",
+   "expected": "≥400",
+   "got": "400",
+   "pass": true
+  },
+  {
+   "area": "Storage",
+   "attack": "Carla cria bucket público",
+   "expected": "erro",
+   "got": "erro",
+   "pass": true
+  },
+  {
+   "area": "RPC",
+   "attack": "Carla chama is_party",
+   "expected": "≥400",
+   "got": "404",
+   "pass": true
+  },
+  {
+   "area": "RPC",
+   "attack": "Carla chama purge_security_events",
+   "expected": "≥400",
+   "got": "404",
+   "pass": true
+  },
+  {
+   "area": "RPC",
+   "attack": "Carla chama call_reminders",
+   "expected": "≥400",
+   "got": "404",
+   "pass": true
+  },
+  {
+   "area": "RPC",
+   "attack": "Carla chama rls_auto_enable",
+   "expected": "≥400",
+   "got": "404",
+   "pass": true
+  },
+  {
+   "area": "RPC",
+   "attack": "Carla chama sync_profile",
+   "expected": "≥400",
+   "got": "404",
+   "pass": true
+  },
+  {
+   "area": "RPC",
+   "attack": "Carla chama version_ok",
+   "expected": "≥400",
+   "got": "404",
+   "pass": true
+  },
+  {
+   "area": "RPC",
+   "attack": "anônimo chama my_contacts",
+   "expected": "≥400",
+   "got": "401",
+   "pass": true
+  },
+  {
+   "area": "PostgREST",
+   "attack": "Carla lê private.security_events",
+   "expected": "≥400",
+   "got": "406",
+   "pass": true
+  },
+  {
+   "area": "PostgREST",
+   "attack": "Carla lê private.app_config",
+   "expected": "≥400",
+   "got": "406",
+   "pass": true
+  },
+  {
+   "area": "PostgREST",
+   "attack": "Carla lê private.rate_limits",
+   "expected": "≥400",
+   "got": "406",
+   "pass": true
+  },
+  {
+   "area": "PostgREST",
+   "attack": "anônimo lê agreements",
+   "expected": "401/0 linhas",
+   "got": "401 ",
+   "pass": true
+  },
+  {
+   "area": "PostgREST",
+   "attack": "anônimo lê events",
+   "expected": "401/0 linhas",
+   "got": "401 ",
+   "pass": true
+  },
+  {
+   "area": "PostgREST",
+   "attack": "anônimo lê files",
+   "expected": "401/0 linhas",
+   "got": "401 ",
+   "pass": true
+  },
+  {
+   "area": "PostgREST",
+   "attack": "anônimo lê notifications",
+   "expected": "401/0 linhas",
+   "got": "401 ",
+   "pass": true
+  },
+  {
+   "area": "PostgREST",
+   "attack": "anônimo lê outbox",
+   "expected": "401/0 linhas",
+   "got": "401 ",
+   "pass": true
+  },
+  {
+   "area": "PostgREST",
+   "attack": "anônimo lê consolidations",
+   "expected": "401/0 linhas",
+   "got": "401 ",
+   "pass": true
+  },
+  {
+   "area": "PostgREST",
+   "attack": "anônimo lê profiles",
+   "expected": "401/0 linhas",
+   "got": "401 ",
+   "pass": true
+  },
+  {
+   "area": "PostgREST",
+   "attack": "Ana apaga o próprio acordo",
+   "expected": "403",
+   "got": "403",
+   "pass": true
+  },
+  {
+   "area": "PostgREST",
+   "attack": "Ana edita o histórico",
+   "expected": "403",
+   "got": "403",
+   "pass": true
+  },
+  {
+   "area": "PostgREST",
+   "attack": "Bruno apaga registro do comprovante",
+   "expected": "403",
+   "got": "403",
+   "pass": true
+  },
+  {
+   "area": "Função",
+   "attack": "método __proto__",
+   "expected": "400",
+   "got": "400 BAD_METHOD",
+   "pass": true
+  },
+  {
+   "area": "Função",
+   "attack": "método constructor",
+   "expected": "400",
+   "got": "400 BAD_METHOD",
+   "pass": true
+  },
+  {
+   "area": "Função",
+   "attack": "método resetAll",
+   "expected": "400",
+   "got": "400 BAD_METHOD",
+   "pass": true
+  },
+  {
+   "area": "Função",
+   "attack": "método _storeFile",
+   "expected": "400",
+   "got": "400 BAD_METHOD",
+   "pass": true
+  },
+  {
+   "area": "Função",
+   "attack": "método cron.reminders",
+   "expected": "400",
+   "got": "400 BAD_METHOD",
+   "pass": true
+  },
+  {
+   "area": "Função",
+   "attack": "método deleteReport",
+   "expected": "400",
+   "got": "400 BAD_METHOD",
+   "pass": true
+  },
+  {
+   "area": "Função",
+   "attack": "corpo > 3 MB",
+   "expected": "recusado (413 na função ou 503 no gateway do Supabase)",
+   "got": "503",
+   "pass": true
+  },
+  {
+   "area": "Função",
+   "attack": "cron com segredo falso",
+   "expected": "401",
+   "got": "401",
+   "pass": true
+  },
+  {
+   "area": "MFA-REC",
+   "attack": "Bruno gera códigos (após TOTP)",
+   "expected": "10 códigos «código»",
+   "got": "10 true",
+   "pass": true
+  },
+  {
+   "area": "MFA-REC",
+   "attack": "gerar códigos só com senha (aal1)",
+   "expected": "403 MFA_REQUIRED",
+   "got": "403 MFA_REQUIRED",
+   "pass": true
+  },
+  {
+   "area": "MFA-REC",
+   "attack": "Carla (sem TOTP) usa código do Bruno",
+   "expected": "409 NO_MFA",
+   "got": "409 NO_MFA",
+   "pass": true
+  },
+  {
+   "area": "MFA-REC",
+   "attack": "Carla (com TOTP) usa código do Bruno",
+   "expected": "400 BAD_CODE (ou 429 se o bloqueio de uma rodada anterior ainda vale)",
+   "got": "429 RATE_LIMIT",
+   "pass": true
+  },
+  {
+   "area": "MFA-REC",
+   "attack": "códigos do Bruno intactos após ataque",
+   "expected": "10 ativos",
+   "got": "10",
+   "pass": true
+  },
+  {
+   "area": "MFA-REC",
+   "attack": "Ana usa código do Bruno",
+   "expected": "400 BAD_CODE",
+   "got": "400 BAD_CODE",
+   "pass": true
+  },
+  {
+   "area": "MFA-REC",
+   "attack": "anônimo usa código",
+   "expected": "401",
+   "got": "401",
+   "pass": true
+  },
+  {
+   "area": "MFA-REC",
+   "attack": "PostgREST lê tabela de códigos",
+   "expected": "negado",
+   "got": "404",
+   "pass": true
+  },
+  {
+   "area": "MFA-REC",
+   "attack": "Carla usa o próprio código (normalizado)",
+   "expected": "ok, TOTP removido",
+   "got": "true fatores=0",
+   "pass": true
+  },
+  {
+   "area": "MFA-REC",
+   "attack": "demais códigos revogados após uso",
+   "expected": "0 ativos",
+   "got": "0",
+   "pass": true
+  },
+  {
+   "area": "MFA-REC",
+   "attack": "reutilizar código já usado",
+   "expected": "400 BAD_CODE",
+   "got": "400 BAD_CODE",
+   "pass": true
+  },
+  {
+   "area": "MFA-REC",
+   "attack": "usar código revogado",
+   "expected": "400 BAD_CODE",
+   "got": "400 BAD_CODE",
+   "pass": true
+  },
+  {
+   "area": "MFA-REC",
+   "attack": "5 códigos errados",
+   "expected": "5× 400 BAD_CODE",
+   "got": "400 BAD_CODE | 400 BAD_CODE | 400 BAD_CODE | 400 BAD_CODE | 400 BAD_CODE",
+   "pass": true
+  },
+  {
+   "area": "MFA-REC",
+   "attack": "código certo após 5 erros",
+   "expected": "429 RATE_LIMIT",
+   "got": "429 RATE_LIMIT",
+   "pass": true
+  },
+  {
+   "area": "MFA-REC",
+   "attack": "bloqueio não removeu o TOTP",
+   "expected": "1 fator",
+   "got": "1",
+   "pass": true
+  },
+  {
+   "area": "MFA-REC",
+   "attack": "injeção no código",
+   "expected": "400/429 sem efeito",
+   "got": "429 RATE_LIMIT",
+   "pass": true
+  },
+  {
+   "area": "MFA-REC",
+   "attack": "Carla volta ao estado inicial (sem TOTP)",
+   "expected": "0 fatores",
+   "got": "0",
+   "pass": true
+  }
+ ],
+ "sessao": [
+  {
+   "what": "validade do JWT atual (s)",
+   "got": "3600",
+   "pass": true
+  },
+  {
+   "what": "token vencido → renovado antes da chamada",
+   "got": "ok=true novo=true exp>agora=true",
+   "pass": true
+  },
+  {
+   "what": "sem 401 desnecessário",
+   "got": "200",
+   "pass": true
+  },
+  {
+   "what": "função com token vencido",
+   "got": "401 TOKEN_EXPIRED",
+   "pass": true
+  },
+  {
+   "what": "função com token de assinatura inválida",
+   "got": "401 UNAUTHENTICATED",
+   "pass": true
+  },
+  {
+   "what": "app: 401 → renovar → repetir 1x",
+   "got": "401,200",
+   "pass": true
+  },
+  {
+   "what": "refresh inválido → UNAUTHENTICATED sem laço",
+   "got": "UNAUTHENTICATED chamadas=401",
+   "pass": true
+  },
+  {
+   "what": "resumeSession renovou",
+   "got": "ok=true novo=true",
+   "pass": true
+  }
+ ]
+}

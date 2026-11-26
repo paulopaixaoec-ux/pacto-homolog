@@ -34,6 +34,8 @@
 
   function createRemoteAPI({ supabase: sb, functionsUrl, anonKey, clock = { now: () => new Date() }, redirectTo, functionsRegion }) {
     const now = () => clock.now();
+    // o link de recuperação volta para a mesma página (dentro da lista de URLs permitidas do Supabase) com um marcador de ação
+    const recoveryUrl = String(redirectTo || '') + (String(redirectTo || '').includes('?') ? '&' : '?') + 'acao=nova-senha';
     const subs = new Set();
     let LT = null, LKEY = null, lastSeen = Date.now(), locked = false, expiresAt = 0;
     let snap = null, snapP = null, dirty = true, channel = null, rtStatus = 'off', pollT = null;
@@ -48,10 +50,16 @@
       if (/Invalid login credentials/i.test(m)) return new PactoError('BAD_CREDENTIALS', 'E-mail ou senha incorretos.');
       if (/Email not confirmed/i.test(m)) return new PactoError('UNVERIFIED', 'Confirme seu e-mail pelo link que enviamos antes de entrar.');
       if (/already registered|already been registered/i.test(m)) return new PactoError('CONFLICT', 'Já existe uma conta com este e-mail.');
-      if (/rate limit|too many/i.test(m)) return new PactoError('RATE_LIMIT', 'Muitas tentativas. Aguarde alguns minutos.');
+      if (/captcha/i.test(m)) return new PactoError('CAPTCHA', 'Confirme a verificação anti-robô e tente de novo.');
+      if (/rate limit|too many|only request this after|over_.*_limit/i.test(m) || (e && e.status === 429)) { const sec = /after (\d+) second/i.exec(m); return new PactoError('RATE_LIMIT', sec ? `Muitos pedidos em sequência. Aguarde ${sec[1]} segundos e tente de novo.` : 'Muitas tentativas. Aguarde alguns minutos e tente de novo.'); }
+      if (/different from the old password|same_password/i.test(m) || (e && e.code === 'same_password')) return new PactoError('SAME_PASSWORD', 'A nova senha precisa ser diferente da senha atual.');
+      if (/AAL2|aal2|insufficient_aal/i.test(m) || (e && e.code === 'insufficient_aal')) return new PactoError('MFA_REQUIRED', 'Confirme com o código do app autenticador para continuar.');
+      if (/expired|invalid/i.test(m) && /token|otp|link/i.test(m)) return new PactoError('LINK_INVALID', 'Este link expirou, já foi usado ou não é válido.');
       if (/Password should|weak/i.test(m)) return new PactoError('WEAK_PASSWORD', 'Senha fraca: use ao menos 10 caracteres com letras e números.');
       return new PactoError('AUTH', m || 'Não foi possível concluir. Tente de novo.');
     };
+
+    const cap = (t) => (t ? { captchaToken: String(t) } : {}); // CAPTCHA (Turnstile/hCaptcha) só quando a tela tiver um token
 
     async function startLocal(session) {
       LT = C.randomToken(32); LKEY = await C.sha256Hex('session:' + LT);
@@ -117,9 +125,24 @@
       return snap;
     }
 
+    // sessão: renova o token se faltar pouco para vencer (JWT curto, ex.: 600 s) — usado antes de chamar a função e ao voltar ao app
+    async function freshSession(minLeftSec = 60) {
+      const { data } = await sb.auth.getSession();
+      const s0 = data && data.session; if (!s0) return null;
+      if (s0.expires_at && s0.expires_at - Math.floor(Date.now() / 1000) > minLeftSec) return s0;
+      const r = await sb.auth.refreshSession();
+      return (r.data && r.data.session) || null;
+    }
     async function invoke(method, args) {
       try { return await invokeOnce(method, args); }
-      catch (e) {
+      catch (e0) {
+        let e = e0;
+        // token vencido ou recusado: renova a sessão e repete UMA vez; se não renovar, pede login de novo
+        if (e && (e.code === 'TOKEN_EXPIRED' || e.code === 'UNAUTHENTICATED') && e.httpStatus === 401) {
+          const r = await sb.auth.refreshSession().catch(() => ({ error: true }));
+          if (r.error || !r.data || !r.data.session) { stopLocal(); throw new PactoError('UNAUTHENTICATED', 'Sua sessão terminou. Entre novamente.'); }
+          try { return await invokeOnce(method, args); } catch (e2) { e = e2; }
+        }
         if (e && e.code === 'MFA_REQUIRED' && stepUpHandler) {
           const ok = await stepUpHandler(); // reautenticação forte (hoje TOTP; passkey depois) e repete UMA vez
           if (ok) return invokeOnce(method, args);
@@ -128,7 +151,7 @@
       }
     }
     async function invokeOnce(method, args) {
-      const session = await requireSession();
+      const session = (await freshSession(30)) || await requireSession();
       let res;
       try {
         res = await fetch(functionsUrl.replace(/\/$/, '') + '/pacto-api', {
@@ -142,7 +165,8 @@
       let body = null; try { body = await res.json(); } catch {}
       if (!res.ok || !body || body.error) {
         const e = (body && body.error) || {};
-        throw new PactoError(e.code || 'SERVER', e.message || 'O servidor recusou a operação (' + res.status + ').');
+        const pe = new PactoError(e.code || 'SERVER', e.message || 'O servidor recusou a operação (' + res.status + ').'); pe.httpStatus = res.status;
+        throw pe;
       }
       return body.result;
     }
@@ -154,20 +178,20 @@
       /* ---------- autenticação (Supabase Auth) ---------- */
       async restore() { const { data } = await sb.auth.getSession(); if (!data || !data.session) return null; return { token: await startLocal(data.session) }; },
       onAuthEvent(fn) { authListeners.add(fn); return () => authListeners.delete(fn); },
-      async signup({ email, name, password }) {
+      async signup({ email, name, password, captchaToken }) {
         email = String(email || '').trim().toLowerCase(); name = C.cleanText(name, 60);
         if (!C.isEmail(email)) throw new PactoError('VALIDATION', 'E-mail inválido.');
         if (name.length < 2) throw new PactoError('VALIDATION', 'Informe seu nome de exibição.');
         const probs = C.passwordProblems(password); if (probs.length) throw new PactoError('WEAK_PASSWORD', 'Senha fraca: ' + probs.join(', ') + '.');
-        const { data, error } = await sb.auth.signUp({ email, password, options: { data: { name }, emailRedirectTo: redirectTo } });
+        const { data, error } = await sb.auth.signUp({ email, password, options: { data: { name }, emailRedirectTo: redirectTo, ...cap(captchaToken) } });
         if (error) throw authErr(error);
         if (data.session) return { token: await startLocal(data.session), user: null, pending: false };
         return { pending: true, email };
       },
-      async login({ email, password }) {
+      async login({ email, password, captchaToken }) {
         const wait = Math.ceil((loginFails.until - Date.now()) / 1000);
         if (wait > 0) throw new PactoError('RATE_LIMIT', `Muitas tentativas. Aguarde ${wait} s para tentar de novo.`);
-        const { data, error } = await sb.auth.signInWithPassword({ email: String(email || '').trim().toLowerCase(), password: String(password || '') });
+        const { data, error } = await sb.auth.signInWithPassword({ email: String(email || '').trim().toLowerCase(), password: String(password || ''), options: cap(captchaToken) });
         if (error) {
           loginFails.n++; if (loginFails.n >= 5) loginFails.until = Date.now() + Math.min(300, 15 * 2 ** (loginFails.n - 5)) * 1000;
           throw authErr(error);
@@ -179,9 +203,9 @@
       },
       async logout() { stopLocal(); try { await sb.auth.signOut({ scope: 'local' }); } catch {} return true; },
       async lock() { locked = true; return true; },
-      async unlock(token, password) {
+      async unlock(token, password, captchaToken) {
         const s = await requireSession();
-        const { error } = await sb.auth.signInWithPassword({ email: s.user.email, password: String(password || '') });
+        const { error } = await sb.auth.signInWithPassword({ email: s.user.email, password: String(password || ''), options: cap(captchaToken) });
         if (error) throw (/Invalid login/i.test(error.message) ? new PactoError('BAD_CREDENTIALS', 'Senha incorreta.') : authErr(error));
         locked = false; lastSeen = Date.now(); return true;
       },
@@ -191,18 +215,53 @@
       async revokeOtherSessions() { const { error } = await sb.auth.signOut({ scope: 'others' }); if (error) throw authErr(error); return true; },
       async verifyEmail() { return true; },
       async resendVerification() { const s = await requireSession(); const { error } = await sb.auth.resend({ type: 'signup', email: s.user.email, options: { emailRedirectTo: redirectTo } }); if (error) throw authErr(error); return true; },
-      async resendSignup(email) { const { error } = await sb.auth.resend({ type: 'signup', email: String(email || '').trim().toLowerCase(), options: { emailRedirectTo: redirectTo } }); if (error) throw authErr(error); return true; },
-      async requestReset(email) { const { error } = await sb.auth.resetPasswordForEmail(String(email || '').trim().toLowerCase(), { redirectTo }); if (error) throw authErr(error); return true; },
+      async resendSignup(email, captchaToken) { const { error } = await sb.auth.resend({ type: 'signup', email: String(email || '').trim().toLowerCase(), options: { emailRedirectTo: redirectTo, ...cap(captchaToken) } }); if (error) throw authErr(error); return true; },
+      /* ---------- recuperação de senha (Supabase Auth: link por e-mail; o PACTO nunca vê nem envia senhas) ---------- */
+      async requestReset(email, captchaToken) {
+        email = String(email || '').trim().toLowerCase();
+        if (!C.isEmail(email)) throw new PactoError('VALIDATION', 'Digite um e-mail válido.');
+        const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo: recoveryUrl, ...cap(captchaToken) });
+        if (error) {
+          // limite por pessoa (60 s entre pedidos): só existe para contas reais; tratado como “enviado” para não revelar se o e-mail existe (a tela já impõe 60 s de espera)
+          if (/only request this after/i.test(String(error.message))) return true;
+          const pe = authErr(error);
+          // limite, CAPTCHA e rede aparecem para a pessoa; qualquer outra falha vira a mesma resposta genérica (não revela se o e-mail existe)
+          if (['RATE_LIMIT', 'CAPTCHA', 'VALIDATION'].includes(pe.code) || (error.status === 0) || /fetch|network/i.test(String(error.message))) throw pe;
+          if (typeof console !== 'undefined') console.warn('recuperação: ' + (error.code || error.status || 'erro'));
+        }
+        return true;
+      },
+      /** Situação da sessão aberta pelo link de recuperação (sem iniciar o app): e-mail e se falta o código do autenticador (AAL2). */
+      async recoveryState() {
+        const { data } = await sb.auth.getSession(); const s = data && data.session;
+        if (!s) return { ok: false };
+        let mfa = false;
+        try {
+          const f = await sb.auth.mfa.listFactors(); const lvl = await sb.auth.mfa.getAuthenticatorAssuranceLevel();
+          mfa = ((f.data && f.data.totp) || []).some((x) => x.status === 'verified') && !(lvl.data && lvl.data.currentLevel === 'aal2');
+        } catch { mfa = true; } // na dúvida, exige o segundo fator
+        return { ok: true, email: s.user.email, mfa };
+      },
+      /** Link no formato token_hash (modelo de e-mail recomendado: sobrevive a antivírus que “clicam” nos links). */
+      async recoveryFromTokenHash(tokenHash) {
+        const { error } = await sb.auth.verifyOtp({ type: 'recovery', token_hash: String(tokenHash || '') });
+        if (error) throw new PactoError('LINK_INVALID', 'Este link expirou, já foi usado ou não é válido.');
+        return true;
+      },
+      /** Define a nova senha na sessão de recuperação. Com TOTP ativo, o Supabase só aceita em AAL2; depois encerra os outros aparelhos e esta sessão. */
       async resetPassword({ password }) {
         const probs = C.passwordProblems(password); if (probs.length) throw new PactoError('WEAK_PASSWORD', 'Senha fraca: ' + probs.join(', ') + '.');
         const { error } = await sb.auth.updateUser({ password }); if (error) throw authErr(error);
         try { await sb.auth.signOut({ scope: 'others' }); } catch {}
+        try { await sb.auth.signOut({ scope: 'local' }); } catch {}
+        stopLocal();
         return true;
       },
-      async changePassword(token, { current, next }) {
+      async recoveryCancel() { stopLocal(); try { await sb.auth.signOut({ scope: 'local' }); } catch {} return true; },
+      async changePassword(token, { current, next, captchaToken }) {
         const probs = C.passwordProblems(next); if (probs.length) throw new PactoError('WEAK_PASSWORD', 'Senha fraca: ' + probs.join(', ') + '.');
         const s = await requireSession();
-        const re = await sb.auth.signInWithPassword({ email: s.user.email, password: String(current || '') });
+        const re = await sb.auth.signInWithPassword({ email: s.user.email, password: String(current || ''), options: cap(captchaToken) });
         if (re.error) throw new PactoError('BAD_CREDENTIALS', 'Senha atual incorreta.');
         const { error } = await sb.auth.updateUser({ password: next }); if (error) throw authErr(error);
         try { await sb.auth.signOut({ scope: 'others' }); } catch {}
@@ -233,6 +292,18 @@
         if (error) throw (/invalid|expired/i.test(error.message) ? new PactoError('BAD_CODE', 'Código inválido ou expirado. Confira o relógio do celular e tente de novo.') : authErr(error));
         return true;
       },
+      /* recuperação de MFA: códigos de uso único (o servidor guarda só o hash) */
+      async mfaRecoveryStatus() { return invoke('mfaRecoveryStatus', []); },
+      async mfaRecoveryGenerate() { return invoke('mfaRecoveryGenerate', []); },
+      async mfaRecover(code) {
+        const raw = String(code || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+        if (raw.length !== 16) throw new PactoError('VALIDATION', 'O código de recuperação tem 16 letras e números (ex.: ABCD-EFGH-JKMN-PQRS).');
+        const r = await invoke('mfaRecoveryRedeem', [{ code: raw }]);
+        await sb.auth.refreshSession().catch(() => {});
+        return r;
+      },
+      /** Chamado ao voltar ao app (aba visível, foco, rede de volta): renova a sessão se estiver perto de vencer. */
+      async resumeSession() { if (!LT) return false; try { const s1 = await freshSession(120); if (!s1) { stopLocal(); return false; } emit(); return true; } catch { return false; } },
       async mfaUnenroll(factorId) {
         const { error } = await sb.auth.mfa.unenroll({ factorId }); if (error) throw (/aal2|AAL2/.test(error.message) ? new PactoError('MFA_REQUIRED', 'Confirme com o código atual antes de desativar.') : authErr(error));
         await sb.auth.refreshSession().catch(() => {});
@@ -264,6 +335,13 @@
       try { const r = await invoke(m, args); return r; } finally { dirty = true; }
     }; });
 
+    if (typeof document !== 'undefined' && typeof window !== 'undefined') {
+      // supabase-js já renova sozinho (autoRefreshToken); aqui garantimos a renovação ao VOLTAR (celular que dormiu, aba em segundo plano)
+      const onResume = () => { if (document.visibilityState === 'visible') { try { sb.auth.startAutoRefresh(); } catch {} api.resumeSession(); } };
+      document.addEventListener('visibilitychange', onResume);
+      window.addEventListener('pageshow', onResume);
+      window.addEventListener('online', onResume);
+    }
     sb.auth.onAuthStateChange((event, session) => {
       if (event === 'SIGNED_OUT') stopLocal();
       authListeners.forEach((fn) => { try { fn(event, session); } catch {} });

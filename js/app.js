@@ -7,6 +7,7 @@
   /* 8.2: modo "supabase" (contas reais, banco compartilhado) quando js/config.js traz URL + chave pública;
      senão, o modo local 8.1 (demonstração no navegador) continua funcionando igual. */
   const CFG = window.PACTO_CONFIG || {};
+  const BOOT_URL = { hash: location.hash || '', search: location.search || '' }; // links de e-mail (recuperação de senha): lidos antes de o supabase-js limpar a URL
   const REMOTE = CFG.mode === 'supabase' && !!(CFG.supabaseUrl && CFG.supabaseAnonKey && window.supabase && window.PactoRemote);
   const adapter = REMOTE ? null : window.PactoAPI.localStorageAdapter('pacto8');
   const api = REMOTE
@@ -51,7 +52,7 @@
     if (!e) return;
     if (e.code === 'LOCKED') { showLock(); return; }
     if (e.code === 'EXPIRED' || e.code === 'UNAUTHENTICATED') { signOutLocal(); toast(e.message, 'err'); return; }
-    if (e.code === 'MFA_ENROLL_REQUIRED') { toast(e.message, 'err'); go('#/perfil'); return; }
+    if (e.code === 'MFA_ENROLL_REQUIRED') { toast(e.message, 'err'); mfaSetup().then((ok) => { S.mfaOn = undefined; mfaProbe(); if (ok) refresh(); }); return; }
     console.warn(e);
     toast(e.message || 'Algo deu errado.', 'err');
   }
@@ -66,8 +67,9 @@
       applyPrefs();
     } catch (e) { if (e.code === 'LOCKED') { S.loading = false; showLock(); return; } handleErr(e); }
     render();
+    mfaProbe();
   }
-  function signOutLocal() { S.token = null; S.me = null; sessionStorage.removeItem('pacto8:token'); hideLock(); closeSheet(true); render(); }
+  function signOutLocal() { S.token = null; S.me = null; S.mfaOn = undefined; S.forgotUntil = 0; sessionStorage.removeItem('pacto8:token'); hideLock(); closeSheet(true); render(); }
   function applyPrefs() {
     const me = S.me; if (!me) return;
     U.setLang(me.lang);
@@ -190,21 +192,85 @@
   async function logout() { S.menu = false; try { await api.logout(S.token); } catch {} signOutLocal(); location.hash = '#/inicio'; }
 
   /* ---------- trava por inatividade ---------- */
+  /* 8.2 · CAPTCHA (Cloudflare Turnstile ou hCaptcha) nas telas de senha. Só liga quando config.js traz uma chave PÚBLICA de site;
+     sem chave, nada muda. A chave secreta fica só no painel do Supabase (Auth → Attack Protection). */
+  const CAPTCHA = REMOTE && CFG.captchaSiteKey && /^(turnstile|hcaptcha)$/.test(CFG.captchaProvider || '') ? { provider: CFG.captchaProvider, key: CFG.captchaSiteKey } : null;
+  let captchaLib = null;
+  const NO_CAPTCHA = Object.freeze({ el: null, need: async () => undefined, reset: () => {} });
+  function loadCaptcha() {
+    if (!CAPTCHA) return Promise.resolve(null);
+    if (captchaLib) return captchaLib;
+    // a biblioteca vem por <script> estático no index.html (gerado por tools/configure.mjs); aqui só esperamos ela ficar pronta
+    captchaLib = new Promise((res, rej) => { const t0 = Date.now(); (function wait() { const L = CAPTCHA.provider === 'turnstile' ? window.turnstile : window.hcaptcha; if (L && L.render) return res(L); if (Date.now() - t0 > 20000) { captchaLib = null; return rej(new Error('captcha')); } setTimeout(wait, 100); })(); });
+    return captchaLib;
+  }
+  /** Caixa de verificação anti-robô. need() devolve o token (ou lança aviso); reset() após cada tentativa (o token vale uma vez). */
+  function captchaBox() {
+    if (!CAPTCHA) return NO_CAPTCHA;
+    let token = null, wid = null, lib = null;
+    const el = h('div', { class: 'captcha-box', style: { minHeight: '68px', margin: '6px 0 10px', display: 'flex', justifyContent: 'center' }, 'aria-label': 'Verificação anti-robô' });
+    loadCaptcha().then((L) => {
+      lib = L; if (!L) throw new Error('captcha');
+      const opts = { sitekey: CAPTCHA.key, callback: (t) => { token = t; }, 'expired-callback': () => { token = null; }, 'error-callback': () => { token = null; }, theme: document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light' };
+      if (CAPTCHA.provider === 'turnstile') { opts.language = 'pt-br'; opts.appearance = 'interaction-only'; opts.action = 'auth'; }
+      wid = L.render(el, opts);
+    }).catch(() => { el.replaceChildren(h('div', { class: 'err', text: 'Não foi possível carregar a verificação anti-robô. Confira a conexão e recarregue a página.' })); });
+    return {
+      el,
+      need: async () => { if (token) return token; throw Object.assign(new Error('Confirme a verificação anti-robô (“Não sou um robô”) e tente de novo.'), { code: 'CAPTCHA' }); },
+      reset: () => { token = null; try { if (lib && wid != null) lib.reset(wid); } catch {} },
+    };
+  }
   async function lockNow() { S.menu = false; try { await api.lock(S.token); } catch {} showLock(); }
   function showLock() {
     if (S.locked) return; S.locked = true;
     const pw = h('input', { type: 'password', autocomplete: 'current-password', class: 'input', placeholder: 'Sua senha', 'aria-label': 'Senha' });
     const err = h('div', { class: 'err', role: 'alert' });
-    const unlock = async () => { try { await api.unlock(S.token, pw.value); hideLock(); S.lastAct = Date.now(); refresh(); } catch (e) { if (['EXPIRED', 'UNAUTHENTICATED'].includes(e.code)) { hideLock(); signOutLocal(); } err.textContent = e.message; } };
+    const cap = captchaBox();
+    const unlock = async () => { try { await api.unlock(S.token, pw.value, await cap.need()); cap.reset(); hideLock(); S.lastAct = Date.now(); refresh(); } catch (e) { if (['EXPIRED', 'UNAUTHENTICATED'].includes(e.code)) { hideLock(); signOutLocal(); } cap.reset(); err.textContent = e.message; } };
     pw.addEventListener('keydown', (e) => { if (e.key === 'Enter') unlock(); });
     const demo = S.me && S.me.demo;
     const el = h('div', { class: 'lockscreen', id: 'lock', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Sessão bloqueada' },
       h('div', { class: 'lock-card glass-strong' }, avatar(S.me, 72), h('h2', { style: { margin: '6px 0 0' }, text: 'Sessão bloqueada' }), h('p', { class: 'muted', style: { margin: 0 }, text: 'Por segurança, o PACTO bloqueia após inatividade. Digite sua senha para continuar.' }),
-        h('div', { style: { width: '100%' } }, pw), err, demo ? h('div', { class: 'small muted' }, 'Conta demo · senha: ', h('code', { text: Seed.DEMO_PASSWORD })) : null,
+        h('div', { style: { width: '100%' } }, pw), cap.el, err, demo ? h('div', { class: 'small muted' }, 'Conta demo · senha: ', h('code', { text: Seed.DEMO_PASSWORD })) : null,
         h('button', { class: 'btn block', on: { click: unlock } }, icon('lock', 18), 'Desbloquear'), h('button', { class: 'link-btn', on: { click: () => { hideLock(); logout(); } } }, 'Sair e entrar com outra conta')));
     document.body.appendChild(el); setTimeout(() => pw.focus(), 50);
   }
   function hideLock() { S.locked = false; const l = document.getElementById('lock'); if (l) l.remove(); }
+  /* 8.2 · recuperação de MFA com código de uso único (para quem perdeu o app autenticador). */
+  function recoveryDialog() {
+    return new Promise((resolve) => {
+      const old = document.getElementById('mfa-recover'); if (old) old.remove();
+      const code = h('input', { class: 'input', autocomplete: 'off', autocapitalize: 'characters', spellcheck: 'false', maxlength: '24', placeholder: 'XXXX-XXXX-XXXX-XXXX', 'aria-label': 'Código de recuperação', style: { textAlign: 'center', letterSpacing: '.12em', fontFamily: 'ui-monospace, monospace' } });
+      const err = h('div', { class: 'err', role: 'alert' });
+      const done = (ok) => { el.remove(); resolve(ok); };
+      const go = h('button', { class: 'btn block lime', on: { click: async () => {
+        go.disabled = true; err.textContent = '';
+        try { await api.mfaRecover(code.value); done(true); toast('Verificação em duas etapas desvinculada. Ative de novo com o app autenticador novo.'); location.hash = '#/perfil'; render(); }
+        catch (e) { err.textContent = e.message; go.disabled = false; }
+      } } }, icon('key', 18), 'Usar código de recuperação');
+      code.addEventListener('keydown', (e) => { if (e.key === 'Enter') go.click(); if (e.key === 'Escape') done(false); });
+      const el = h('div', { class: 'lockscreen', id: 'mfa-recover', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Recuperar acesso sem o app autenticador' },
+        h('div', { class: 'lock-card glass-strong' }, h('span', { class: 'ev-ico warn', style: { width: '52px', height: '52px' } }, icon('key', 26)),
+          h('h2', { style: { margin: '6px 0 0' }, text: 'Perdi meu autenticador' }),
+          h('p', { class: 'muted', style: { margin: 0 }, text: 'Digite um dos códigos de recuperação que você guardou ao ativar a verificação em duas etapas. Cada código vale uma vez. Depois, ative de novo com o aparelho novo.' }),
+          h('div', { style: { width: '100%' } }, code), err, go,
+          h('p', { class: 'small muted', style: { margin: 0 }, text: 'Sem códigos? Fale com o suporte do PACTO pelo e-mail da sua conta: a remoção assistida exige confirmação de identidade e espera de 72 horas.' }),
+          h('button', { class: 'link-btn', on: { click: () => done(false) } }, 'Cancelar')));
+      document.body.appendChild(el); setTimeout(() => code.focus(), 50);
+    });
+  }
+  function recoveryCodesView(codes, onDone) {
+    const txt = 'PACTO · códigos de recuperação da verificação em duas etapas\nGerados em ' + new Date().toLocaleString('pt-BR') + '\nCada código vale UMA vez. Guarde fora do celular (papel ou gerenciador de senhas).\n\n' + codes.join('\n') + '\n';
+    return h('div', { class: 'stack', style: { gap: '10px' } },
+      h('div', { class: 'row wrap', style: { gap: '8px' } }, pill('Mostrados só agora', 'warn')),
+      h('p', { class: 'small', style: { margin: 0 }, text: 'Guarde estes códigos em lugar seguro, fora do celular. Se perder o app autenticador, um deles libera sua conta (uma vez cada). O PACTO não consegue mostrá-los de novo.' }),
+      h('div', { class: 'card', style: { padding: '10px 14px', display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))', gap: '6px 16px' } }, codes.map((c) => h('code', { text: c, style: { fontSize: '14px', letterSpacing: '.06em' } }))),
+      h('div', { class: 'actions' },
+        h('button', { class: 'btn ghost sm', on: { click: async () => { try { await navigator.clipboard.writeText(txt); toast('Códigos copiados.'); } catch { toast('Não foi possível copiar: anote os códigos.', 'err'); } } } }, icon('copy', 16), 'Copiar'),
+        h('button', { class: 'btn ghost sm', on: { click: () => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([txt], { type: 'text/plain' })); a.download = 'pacto-codigos-recuperacao.txt'; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000); } } }, icon('download', 16), 'Baixar .txt'),
+        h('button', { class: 'btn sm', on: { click: onDone } }, icon('check', 16), 'Já guardei')));
+  }
   /* 8.2 · reautenticação forte (step-up) para aceites e aprovações financeiras. Hoje: código TOTP; passkey entra aqui depois. */
   function stepUpDialog() {
     return new Promise((resolve) => {
@@ -212,18 +278,103 @@
       const code = h('input', { class: 'input', inputmode: 'numeric', autocomplete: 'one-time-code', maxlength: '6', placeholder: '000000', 'aria-label': 'Código de 6 dígitos', style: { textAlign: 'center', letterSpacing: '.3em', fontSize: '20px' } });
       const err = h('div', { class: 'err', role: 'alert' });
       const done = (ok) => { el.remove(); resolve(ok); };
-      const ok = h('button', { class: 'btn block lime', on: { click: async () => { ok.disabled = true; try { await api.mfaVerify({ code: code.value }); done(true); } catch (e) { err.textContent = e.message; ok.disabled = false; code.select(); } } } }, icon('shield', 18), 'Confirmar');
+      const ok = h('button', { class: 'btn block lime', on: { click: async () => { ok.disabled = true; try { await api.mfaVerify({ code: code.value }); done(true); } catch (e) { if (e.code === 'MFA_ENROLL_REQUIRED') { done(false); mfaSetup().then(() => { S.mfaOn = undefined; mfaProbe(); }); return; } err.textContent = e.message; ok.disabled = false; code.select(); } } } }, icon('shield', 18), 'Confirmar');
       code.addEventListener('keydown', (e) => { if (e.key === 'Enter') ok.click(); if (e.key === 'Escape') done(false); });
       const el = h('div', { class: 'lockscreen', id: 'stepup', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Confirmação em duas etapas' },
         h('div', { class: 'lock-card glass-strong' }, h('span', { class: 'ev-ico lime', style: { width: '52px', height: '52px' } }, icon('shield', 26)),
           h('h2', { style: { margin: '6px 0 0' }, text: 'Confirme que é você' }),
           h('p', { class: 'muted', style: { margin: 0 }, text: 'Aceites e aprovações financeiras pedem o código do seu app autenticador (válido por 15 minutos depois de confirmado).' }),
           h('div', { style: { width: '100%' } }, code), err, ok,
+          h('button', { class: 'link-btn', on: { click: async () => { done(false); await recoveryDialog(); } } }, 'Perdi meu autenticador'),
           h('button', { class: 'link-btn', on: { click: () => done(false) } }, 'Cancelar')));
       document.body.appendChild(el); setTimeout(() => code.focus(), 50);
     });
   }
   if (REMOTE && api.onStepUp) api.onStepUp(stepUpDialog);
+
+  /* 8.2 · ativação guiada da verificação em duas etapas (TOTP): passo a passo para iPhone e Android, QR code, chave manual e códigos de recuperação.
+     Abre sozinha no primeiro acesso sem 2FA, quando uma operação financeira exige 2FA e pelo botão em Perfil. Nenhum dado biométrico/segredo fica no PACTO além do fator do Supabase Auth. */
+  function mfaSetup() {
+    return new Promise((resolve) => {
+      const old = document.getElementById('mfa-setup'); if (old) old.remove();
+      const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+      let plat = isIOS ? 'ios' : 'android', en = null;
+      const body = h('div', { style: { display: 'grid', gap: '12px', width: '100%', textAlign: 'left' } });
+      const card = h('div', { class: 'lock-card glass-strong', style: { width: 'min(560px, 100%)', maxHeight: '92dvh', overflow: 'auto', textAlign: 'left', justifyItems: 'stretch' } }, body);
+      const el = h('div', { class: 'lockscreen', id: 'mfa-setup', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Ativar verificação em duas etapas' }, card);
+      let finished = false;
+      const done = (ok) => { if (finished) return; finished = true; el.remove(); resolve(ok); };
+      const head = (n, title, sub) => [h('div', { class: 'row', style: { gap: '10px' } }, h('span', { class: 'ev-ico lime', style: { width: '40px', height: '40px', borderRadius: '14px' } }, icon('shield', 22)), h('div', null, h('div', { class: 'eyebrow', text: `Passo ${n} de 3` }), h('h2', { style: { margin: 0, fontSize: '20px' }, text: title }))), sub ? h('p', { class: 'muted small', style: { margin: 0 }, text: sub }) : null];
+      const later = (label = 'Agora não') => h('button', { class: 'link-btn', type: 'button', style: { justifySelf: 'center' }, on: { click: () => done(false) } }, label);
+      const STEPS = {
+        ios: [
+          ['App recomendado: Google Authenticator ou Microsoft Authenticator (App Store, grátis). No iOS 18 ou mais novo você também pode usar o app “Senhas” da Apple, que já vem no iPhone.'],
+          ['No app: toque em “+” e depois em “Ler código QR”. Se estiver neste mesmo iPhone, use “Inserir chave de configuração” e cole a chave do próximo passo.'],
+          ['App Senhas (Apple): toque em “+”, crie a entrada “PACTO”, toque em “Configurar código de verificação” e escolha “Inserir chave de configuração”.'],
+        ],
+        android: [
+          ['App recomendado: Google Authenticator ou Microsoft Authenticator (Play Store, grátis).'],
+          ['No app: toque em “+” e depois em “Ler código QR”.'],
+          ['Se estiver neste mesmo celular, não dá para escanear a própria tela: escolha “Inserir chave de configuração”, nome “PACTO”, tipo “Baseada em tempo”, e cole a chave do próximo passo.'],
+        ],
+      };
+      const step1 = () => {
+        body.replaceChildren(...head(1, 'Escolha onde ficará seu código', 'Leva cerca de 2 minutos. Seu app autenticador gera um código novo de 6 dígitos a cada 30 segundos; ele protege aceites, aprovações e renegociações.'),
+          seg([['ios', 'iPhone'], ['android', 'Android']], plat, (v) => { plat = v; step1(); }, 'Aparelho'),
+          h('ol', { style: { margin: 0, paddingLeft: '20px', display: 'grid', gap: '8px', fontSize: '14px' } }, STEPS[plat].map(([t1]) => h('li', { text: t1 }))),
+          h('div', { class: 'note' }, icon('shield', 18), h('span', { text: 'O PACTO não guarda sua biometria. Se perder o celular, os códigos de recuperação (passo 3) devolvem seu acesso.' })),
+          h('button', { class: 'btn block lime', type: 'button', on: { click: async (e) => {
+            e.currentTarget.disabled = true;
+            try { en = await api.mfaEnroll(); step2(); } catch (ex) { handleErr(ex); e.target.disabled = false; }
+          } } }, icon('right', 18), 'Gerar QR code'), later());
+      };
+      const step2 = () => {
+        const code = h('input', { class: 'input', id: 'mfa-code', inputmode: 'numeric', autocomplete: 'one-time-code', maxlength: '6', placeholder: '000000', 'aria-label': 'Código de 6 dígitos do app', style: { textAlign: 'center', letterSpacing: '.3em', fontSize: '20px' } });
+        const err = h('div', { class: 'err', role: 'alert' });
+        const secretTxt = String(en.secret || '').replace(/\s+/g, '').replace(/(.{4})/g, '$1 ').trim();
+        const ok = h('button', { class: 'btn block lime', type: 'button', on: { click: async () => {
+          ok.disabled = true; err.textContent = '';
+          try { await api.mfaVerify({ factorId: en.factorId, code: code.value }); S.mfaOn = true; step3(); } catch (ex) { err.textContent = ex.message; ok.disabled = false; code.select(); }
+        } } }, icon('check', 18), 'Ativar');
+        code.addEventListener('keydown', (e) => { if (e.key === 'Enter') ok.click(); });
+        body.replaceChildren(...head(2, 'Adicione o PACTO ao app', 'Escaneie o QR code com o app autenticador ou digite a chave. Depois, digite o código de 6 dígitos que o app mostrar.'),
+          h('div', { class: 'row wrap', style: { gap: '16px', alignItems: 'center', justifyContent: 'center' } },
+            h('img', { src: en.qr, alt: 'QR code para o app autenticador', width: 176, height: 176, style: { background: '#fff', borderRadius: '14px', padding: '8px' } }),
+            h('div', { style: { minWidth: '210px', flex: 1 } }, h('div', { class: 'eyebrow', text: 'Chave manual (sem câmera)' }),
+              h('code', { id: 'mfa-secret', text: secretTxt, style: { wordBreak: 'break-all', fontSize: '15px', letterSpacing: '.04em', display: 'block', margin: '4px 0 8px' } }),
+              h('button', { class: 'btn ghost sm', type: 'button', on: { click: async () => { try { await navigator.clipboard.writeText(String(en.secret || '')); toast('Chave copiada. Cole no app autenticador.'); } catch { toast('Não foi possível copiar: digite a chave.', 'err'); } } } }, icon('copy', 16), 'Copiar chave'))),
+          h('p', { class: 'small muted', style: { margin: 0 }, text: (plat === 'ios' ? 'No iPhone: Authenticator → “+” → “Ler código QR”; ou Senhas → “Configurar código de verificação” → “Inserir chave”. ' : 'No Android: Authenticator → “+” → “Ler código QR”; ou “Inserir chave de configuração”. ') + 'Está neste mesmo celular? Use “Copiar chave” e cole no app.' }),
+          h('div', { class: 'field', style: { margin: 0 } }, h('label', { for: 'mfa-code', text: 'Código de 6 dígitos' }), code), err, ok, later('Cancelar'));
+        setTimeout(() => code.focus(), 60);
+      };
+      const step3 = async () => {
+        body.replaceChildren(...head(3, 'Guarde seus códigos de recuperação', 'Verificação ativada! Agora gere os códigos que devolvem seu acesso se você perder o celular.'), U.skeleton(2));
+        let r = null;
+        try { r = await api.mfaRecoveryGenerate(); } catch (ex) { /* servidor sem recuperação: segue sem códigos */ }
+        const fin = () => { toast('Verificação em duas etapas ativada.'); done(true); };
+        if (r && r.codes && typeof recoveryCodesView === 'function') body.replaceChildren(...head(3, 'Guarde seus códigos de recuperação', 'Verificação ativada! Cada código vale uma vez e é mostrado só agora.'), recoveryCodesView(r.codes, fin));
+        else body.replaceChildren(...head(3, 'Tudo pronto', 'Verificação em duas etapas ativada. Gere os códigos de recuperação em Perfil → Verificação em duas etapas.'), h('button', { class: 'btn block lime', type: 'button', on: { click: fin } }, 'Concluir'));
+      };
+      el.addEventListener('keydown', (e) => { if (e.key === 'Escape') done(false); });
+      document.body.appendChild(el); step1();
+    });
+  }
+  /* 2FA ainda não ativada: aviso na tela inicial + abertura automática do guia uma vez por sessão do navegador */
+  async function mfaProbe() {
+    if (!REMOTE || S.mfaOn !== undefined) return;
+    S.mfaOn = null;
+    try {
+      const st = await api.mfaStatus(); S.mfaOn = !!st.enabled;
+      if (!st.enabled && !sessionStorage.getItem('pacto8:mfaAsked')) { sessionStorage.setItem('pacto8:mfaAsked', '1'); render(); await mfaSetup(); S.mfaOn = undefined; mfaProbe(); }
+      else render();
+    } catch { S.mfaOn = undefined; }
+  }
+  function mfaBanner() {
+    if (!REMOTE || S.mfaOn !== false) return null;
+    return h('div', { class: 'card glass', style: { marginBottom: '14px' } }, h('div', { class: 'row wrap', style: { alignItems: 'center' } }, h('span', { class: 'ev-ico warn' }, icon('shield', 14)),
+      h('div', { style: { flex: 1, minWidth: '200px' } }, h('b', null, 'Ative a verificação em duas etapas'), h('div', { class: 'small muted', text: 'Necessária para aceitar propostas, aprovar comprovantes e renegociar. Leva 2 minutos, com QR code e passo a passo para iPhone e Android.' })),
+      h('button', { class: 'btn sm lime', on: { click: async () => { await mfaSetup(); S.mfaOn = undefined; mfaProbe(); } } }, 'Ativar agora')));
+  }
   ['pointerdown', 'keydown', 'wheel', 'touchstart'].forEach((ev) => addEventListener(ev, () => {
     S.lastAct = Date.now();
     if (S.token && !S.locked && Date.now() - S.lastTouch > 45000) { S.lastTouch = Date.now(); api.touch(S.token).catch((e) => { if (e.code === 'LOCKED') showLock(); }); }
@@ -249,23 +400,24 @@
     const [pw, pwWrap] = pwInput('au-pw', mode === 'signup' ? 'new-password' : 'current-password');
     const name = h('input', { id: 'au-name', autocomplete: 'name', placeholder: 'Como quer ser chamado(a)?' });
     const code = h('input', { id: 'au-code', inputmode: 'numeric', autocomplete: 'one-time-code', maxlength: '6', placeholder: '000000' });
+    const cap = ['login', 'signup', 'reset'].includes(mode) ? captchaBox() : NO_CAPTCHA;
     const busy = (b, on) => { b.disabled = on; b.dataset.label = b.dataset.label || b.textContent; b.textContent = on ? 'Aguarde…' : b.dataset.label; };
     let form;
     const submit = h('button', { class: 'btn block', type: 'submit' }, mode === 'signup' ? 'Criar minha conta' : mode === 'reset' ? (REMOTE ? 'Enviar link' : 'Enviar código') : mode === 'reset2' || mode === 'newpass' ? 'Salvar nova senha' : 'Entrar');
     const onSubmit = async (e) => {
       e.preventDefault(); err.textContent = ''; busy(submit, true);
       try {
-        if (mode === 'login') { const r = await api.login({ email: email.value, password: pw.value }); setToken(r.token); location.hash = '#/inicio'; await refresh(); if (S.me) toast('Bem-vindo(a), ' + S.me.name.split(' ')[0] + '!'); return; }
+        if (mode === 'login') { const r = await api.login({ email: email.value, password: pw.value, captchaToken: await cap.need() }); setToken(r.token); location.hash = '#/inicio'; await refresh(); if (S.me) toast('Bem-vindo(a), ' + S.me.name.split(' ')[0] + '!'); return; }
         if (mode === 'signup') {
-          const r = await api.signup({ email: email.value, name: name.value, password: pw.value });
+          const r = await api.signup({ email: email.value, name: name.value, password: pw.value, captchaToken: await cap.need() });
           if (r.pending) { S.authEmail = r.email; S.authMode = 'sent'; render(); return; }
           setToken(r.token); location.hash = '#/inicio'; await refresh(); toast(REMOTE ? 'Conta criada.' : 'Conta criada. Confirme seu e-mail para movimentar acordos.'); return;
         }
-        if (mode === 'reset' && REMOTE) { await api.requestReset(email.value); S.authEmail = email.value; S.authMode = 'resetSent'; render(); return; }
+        if (mode === 'reset' && REMOTE) { await api.requestReset(email.value, await cap.need()); S.authEmail = email.value; S.authMode = 'resetSent'; render(); return; }
         if (mode === 'newpass') { await api.resetPassword({ password: pw.value }); S.recovery = false; S.authMode = 'login'; const r = await api.restore(); if (r) { setToken(r.token); location.hash = '#/inicio'; await refresh(); } else render(); toast('Senha alterada. Outros aparelhos foram desconectados.'); return; }
         if (mode === 'reset') { await api.requestReset(email.value); S.authEmail = email.value; S.authMode = 'reset2'; render(); toast('Se o e-mail existir, enviamos um código.'); return; }
         if (mode === 'reset2') { await api.resetPassword({ email: email.value, code: code.value, password: pw.value }); S.authMode = 'login'; render(); toast('Senha alterada. Entre com a nova senha.'); return; }
-      } catch (ex) { err.textContent = ex.message; } finally { busy(submit, false); }
+      } catch (ex) { err.textContent = ex.message; cap.reset(); } finally { busy(submit, false); }
     };
     const demo = h('div', { class: 'demo-box' }, h('div', { class: 'row between' }, h('b', null, 'Acesso rápido de teste'), pill('Demo', 'lime')),
       h('div', { class: 'small muted', style: { marginTop: '4px' } }, 'Contas fictícias com senha ', h('code', { text: Seed.DEMO_PASSWORD }), '. Abra outra aba para usar dois usuários ao mesmo tempo.'),
@@ -276,17 +428,19 @@
     if (mode !== 'newpass') fields.push(field('E-mail', email));
     if (mode === 'reset2') fields.push(field('Código recebido', code));
     if (mode !== 'reset') fields.push(h('div', { class: 'field' }, h('label', { for: 'au-pw', text: mode === 'reset2' ? 'Nova senha' : 'Senha' }), pwWrap, mode !== 'login' ? h('small', { class: 'hint', text: REMOTE ? 'Mínimo de 10 caracteres, com letras e números. Use uma senha exclusiva para o PACTO.' : 'Mínimo de 10 caracteres, com letras e números. Nunca use uma senha real nesta demonstração.' }) : null));
-    form = h('form', { novalidate: true, on: { submit: onSubmit } }, fields, err, submit);
+    form = h('form', { novalidate: true, on: { submit: onSubmit } }, fields, cap.el, err, submit);
     const titles = { login: ['Entre no seu espaço', 'Acompanhe o que você deve e o que vai receber.'], signup: ['Crie sua conta', 'Uma única conta para comprar e vender.'], reset: ['Recuperar senha', REMOTE ? 'Enviaremos um link seguro para o seu e-mail.' : 'Enviaremos um código para o seu e-mail.'], reset2: ['Nova senha', 'Digite o código e escolha uma senha nova.'], newpass: ['Defina uma nova senha', 'Você abriu o link de recuperação. Escolha a nova senha.'] }[mode] || ['', ''];
     if (mode === 'sent' || mode === 'resetSent') {
       const isSent = mode === 'sent';
       const msg = isSent ? `Enviamos um link de confirmação para ${S.authEmail}. Abra o e-mail (confira também o spam), toque em “Confirmar” e você entra automaticamente.` : `Se existir uma conta para ${S.authEmail}, enviamos um link para criar uma nova senha. Ele vale por pouco tempo.`;
-      const again = h('button', { class: 'btn ghost sm', on: { click: async (e) => { e.target.disabled = true; try { await (isSent ? api.resendSignup(S.authEmail) : api.requestReset(S.authEmail)); toast('Enviado de novo.'); } catch (ex) { toast(ex.message, 'err'); } finally { setTimeout(() => { e.target.disabled = false; }, 30000); } } } }, icon('mail', 16), 'Reenviar');
+      const capR = captchaBox();
+      const again = h('button', { class: 'btn ghost sm', on: { click: async (e) => { e.target.disabled = true; try { const t = await capR.need(); await (isSent ? api.resendSignup(S.authEmail, t) : api.requestReset(S.authEmail, t)); toast('Enviado de novo.'); } catch (ex) { toast(ex.message, 'err'); } finally { capR.reset(); setTimeout(() => { e.target.disabled = false; }, 60000); } } } }, icon('mail', 16), 'Reenviar');
       const sentPanel = h('div', { class: 'auth-panel' }, h('span', { class: 'eyebrow' }, 'PACTO 8.2 · ' + ENV_LABEL), h('h2', { text: isSent ? 'Confirme seu e-mail' : 'Confira seu e-mail' }), h('p', { class: 'muted', text: msg }),
-        h('div', { class: 'actions' }, again, h('button', { class: 'link-btn', on: { click: () => { S.authMode = 'login'; render(); } } }, icon('left', 16), 'Voltar ao login')));
+        capR.el, h('div', { class: 'actions' }, again, h('button', { class: 'link-btn', on: { click: () => { S.authMode = 'login'; render(); } } }, icon('left', 16), 'Voltar ao login')));
       return h('div', { class: 'auth' }, h('div', { class: 'auth-card glass-strong' }, h('div', { class: 'auth-brand' }, logo(40), h('h1', null, 'O combinado tem valor.'), h('p', null, 'Acordos às claras.')), sentPanel));
     }
     const panel = h('div', { class: 'auth-panel' }, h('span', { class: 'eyebrow' }, REMOTE ? 'PACTO 8.2 · ' + ENV_LABEL : 'PACTO 8.1 · protótipo de testes'), h('h2', { text: titles[0] }), h('p', { class: 'muted', style: { margin: '0 0 18px' }, text: titles[1] }),
+      mode === 'login' && S.authNotice ? h('div', { class: 'note ok', role: 'status', style: { margin: '0 0 14px' } }, icon('check', 18), h('span', { text: S.authNotice })) : null,
       mode === 'login' || mode === 'signup' ? h('div', { style: { marginBottom: '16px' } }, seg([['login', 'Entrar'], ['signup', 'Criar conta']], mode, (v) => { S.authMode = v; render(); }, 'Modo')) : null,
       form,
       h('div', { class: 'row between', style: { marginTop: '12px' } },
@@ -300,6 +454,105 @@
         h('div', { class: 'auth-feats' }, [['shield', 'Aceite bilateral em cada versão'], ['clip', 'Comprovantes obrigatórios e imutáveis após aprovação'], ['hash', 'Histórico encadeado por SHA-256'], ['layers', 'Unificação e antecipação sem perder a origem']].map(([i, l]) => h('div', { class: 'auth-feat' }, icon(i, 18), l))),
         h('div', { class: 'rule' }, h('b', null, 'A regra do PACTO'), 'Quem vende sabe quanto vai receber. Quem compra sabe quanto deve. Nenhum acordo muda sem que os dois concordem.')),
       panel));
+  }
+
+  /* ---------- 8.2 · recuperação de senha (link por e-mail do Supabase Auth; sem senha antiga; preserva o MFA) ---------- */
+  function parseAuthLink(u) {
+    const hp = new URLSearchParams(/^#[^/]/.test(u.hash) ? u.hash.slice(1) : ''), qp = new URLSearchParams(u.search);
+    const g = (k) => hp.get(k) || qp.get(k) || '';
+    const out = { kind: null, reason: 'invalid', tokenHash: '' };
+    if (g('error') || g('error_code')) { out.kind = 'error'; out.reason = /expired|otp/i.test(g('error_code') + ' ' + g('error_description')) ? 'expired' : 'invalid'; }
+    else if (hp.get('type') === 'recovery' && hp.get('access_token')) out.kind = 'recovery';
+    else if (qp.get('type') === 'recovery' && qp.get('token_hash')) { out.kind = 'confirm'; out.tokenHash = qp.get('token_hash'); }
+    return out;
+  }
+  const maskEmail = (e) => { const [u, d] = String(e || '').split('@'); return d ? (u.length <= 2 ? u[0] + '•' : u.slice(0, 2) + '•••') + '@' + d : '•••'; };
+  function recLeave() { history.replaceState(null, '', location.pathname); location.reload(); }
+  async function recAdvance() {
+    try { const st = await api.recoveryState(); S.rec = st.ok ? { stage: st.mfa ? 'mfa' : 'newpass', email: st.email } : { stage: 'error', reason: 'invalid' }; }
+    catch { S.rec = { stage: 'error', reason: 'invalid' }; }
+    render();
+  }
+  async function recStart() { if (S.rec) return; S.rec = { stage: 'wait' }; render(); await recAdvance(); }
+  function recoveryView() {
+    const R = S.rec || { stage: 'wait' };
+    const card = (...kids) => h('div', { class: 'auth' }, h('div', { class: 'auth-card glass-strong' },
+      h('div', { class: 'auth-brand' }, logo(40), h('h1', null, 'O combinado tem valor.'), h('p', null, 'Acordos às claras.')),
+      h('div', { class: 'auth-panel', 'aria-live': 'polite' }, h('span', { class: 'eyebrow' }, 'PACTO 8.2 · ' + ENV_LABEL), ...kids)));
+    const ico = (name, kind) => h('div', null, h('span', { class: 'ev-ico ' + kind, style: { width: '56px', height: '56px', borderRadius: '18px', margin: '10px 0 4px' } }, icon(name, 28)));
+    const busy = (b, on) => { b.disabled = on; b.dataset.label = b.dataset.label || b.textContent; b.textContent = on ? 'Aguarde…' : b.dataset.label; };
+    const back = (label, fn) => h('button', { class: 'link-btn', type: 'button', on: { click: fn } }, icon('left', 16), label);
+    if (R.stage === 'wait') return card(h('h2', { text: 'Validando o link…' }), h('p', { class: 'muted', text: 'Só um instante.' }), U.skeleton(2));
+    if (R.stage === 'confirm') {
+      const err = h('div', { class: 'err', role: 'alert' });
+      const go1 = h('button', { class: 'btn block', type: 'button', on: { click: async () => { busy(go1, true); err.textContent = ''; try { await api.recoveryFromTokenHash(R.tokenHash); await recAdvance(); } catch (e) { S.rec = { stage: 'error', reason: 'expired' }; render(); } } } }, 'Continuar');
+      return card(ico('key', 'ok'), h('h2', { text: 'Criar uma nova senha' }), h('p', { class: 'muted', text: 'Você abriu o link de recuperação enviado por e-mail. Toque em continuar para escolher a nova senha.' }), err, go1, back('Cancelar', recLeave));
+    }
+    if (R.stage === 'mfa') {
+      const code = h('input', { id: 'rc-code', inputmode: 'numeric', autocomplete: 'one-time-code', maxlength: '6', placeholder: '000000', 'aria-label': 'Código de 6 dígitos', style: { textAlign: 'center', letterSpacing: '.3em', fontSize: '20px' } });
+      const err = h('div', { class: 'err', role: 'alert' });
+      const ok = h('button', { class: 'btn block lime', type: 'button', on: { click: async () => { busy(ok, true); err.textContent = ''; try { await api.mfaVerify({ code: code.value }); await recAdvance(); } catch (e) { err.textContent = e.message; busy(ok, false); code.select(); } } } }, icon('shield', 18), 'Confirmar código');
+      code.addEventListener('keydown', (e) => { if (e.key === 'Enter') ok.click(); });
+      setTimeout(() => code.focus(), 60);
+      return card(ico('shield', 'ok'), h('h2', { text: 'Confirme que é você' }),
+        h('p', { class: 'muted', text: 'Sua conta tem verificação em duas etapas. O link do e-mail sozinho não basta: digite o código de 6 dígitos do app autenticador para criar a nova senha.' }),
+        field('Código do app autenticador', code), err, ok,
+        typeof recoveryDialog === 'function' ? h('button', { class: 'link-btn', type: 'button', on: { click: async () => { if (await recoveryDialog()) await recAdvance(); } } }, 'Perdi meu autenticador') : null,
+        back('Cancelar', async () => { await api.recoveryCancel().catch(() => {}); recLeave(); }));
+    }
+    if (R.stage === 'newpass') {
+      const [p1, w1] = pwInput('rc-pw', 'new-password'), [p2, w2] = pwInput('rc-pw2', 'new-password');
+      const err = h('div', { class: 'err', role: 'alert' });
+      const rules = h('ul', { class: 'small', style: { margin: '0 0 12px', paddingLeft: '18px', display: 'grid', gap: '2px' }, 'aria-label': 'Requisitos da senha' });
+      const match = h('small', { class: 'hint', id: 'rc-match', 'aria-live': 'polite' });
+      const sub = h('button', { class: 'btn block', type: 'submit' }, 'Salvar nova senha');
+      const upd = () => {
+        const probs = C.passwordProblems(p1.value);
+        const R3 = [['mínimo de 10 caracteres', p1.value.length >= 10], ['letras e números', /[A-Za-z]/.test(p1.value) && /\d/.test(p1.value)], ['não use senhas óbvias', !/^(12345|senha|password|qwerty)/i.test(p1.value || '')]];
+        rules.replaceChildren(...R3.map(([l, okk]) => h('li', { style: { color: okk && p1.value ? 'var(--ok)' : 'var(--muted)', fontWeight: 600 } }, (okk && p1.value ? '✓ ' : '• ') + l)));
+        if (p2.value) { const same = p1.value === p2.value; match.textContent = same ? '✓ As senhas coincidem.' : 'As senhas ainda não coincidem.'; match.style.color = same ? 'var(--ok)' : 'var(--danger)'; p2.setAttribute('aria-invalid', String(!same)); } else { match.textContent = ''; p2.removeAttribute('aria-invalid'); }
+        return probs;
+      };
+      p1.addEventListener('input', () => { err.textContent = ''; upd(); }); p2.addEventListener('input', () => { err.textContent = ''; upd(); }); upd();
+      const form = h('form', { novalidate: true, on: { submit: async (e) => {
+        e.preventDefault(); err.textContent = '';
+        const probs = upd(); if (probs.length) { err.textContent = 'Senha fraca: ' + probs.join(', ') + '.'; p1.focus(); return; }
+        if (p1.value !== p2.value) { err.textContent = 'As duas senhas precisam ser iguais.'; p2.focus(); return; }
+        busy(sub, true);
+        try { await api.resetPassword({ password: p1.value }); S.rec = { stage: 'done', email: R.email }; render(); }
+        catch (ex) {
+          if (ex.code === 'MFA_REQUIRED') { S.rec = { stage: 'mfa', email: R.email }; render(); toast(ex.message, 'err'); return; }
+          if (ex.code === 'UNAUTHENTICATED' || ex.code === 'LINK_INVALID' || /session/i.test(ex.message)) { S.rec = { stage: 'error', reason: 'expired' }; render(); return; }
+          err.textContent = ex.message; busy(sub, false);
+        }
+      } } },
+      h('div', { class: 'field' }, h('label', { for: 'rc-pw', text: 'Nova senha' }), w1), rules,
+      h('div', { class: 'field' }, h('label', { for: 'rc-pw2', text: 'Confirme a nova senha' }), w2, match), err, sub);
+      return card(ico('key', 'ok'), h('h2', { text: 'Defina uma nova senha' }),
+        h('p', { class: 'muted', style: { margin: '0 0 14px' }, text: `Conta ${maskEmail(R.email)}. Escolha uma senha exclusiva para o PACTO. Você não precisa da senha anterior.` }), form,
+        back('Cancelar', async () => { await api.recoveryCancel().catch(() => {}); recLeave(); }));
+    }
+    if (R.stage === 'done') {
+      const to = h('button', { class: 'btn block lime', type: 'button', on: { click: () => { if (R.email) sessionStorage.setItem('pacto8:prefill', R.email); sessionStorage.setItem('pacto8:notice', 'Senha alterada com sucesso. Entre com a nova senha.'); recLeave(); } } }, icon('right', 18), 'Entrar no PACTO');
+      setTimeout(() => to.focus(), 60);
+      return card(h('div', null, h('span', { class: 'ev-ico ok', role: 'img', 'aria-label': 'Sucesso', style: { width: '64px', height: '64px', borderRadius: '22px', margin: '10px 0 4px' } }, icon('check', 34))), h('h2', { text: 'Senha alterada com sucesso' }),
+        h('p', { class: 'muted', role: 'status', text: 'Sua nova senha já vale. Por segurança, os outros aparelhos conectados foram desconectados. Se você usa verificação em duas etapas, ela continua ativa.' }), to);
+    }
+    // erro: link expirado, já usado ou inválido
+    const email = h('input', { id: 'rc-email', type: 'email', autocomplete: 'email', inputmode: 'email', placeholder: 'voce@exemplo.com', value: S.authEmail || '' });
+    const err = h('div', { class: 'err', role: 'alert' });
+    const cap = (typeof captchaBox === 'function') ? captchaBox() : { el: null, need: async () => undefined, reset: () => {} };
+    const send = h('button', { class: 'btn block', type: 'submit' }, icon('mail', 16), 'Enviar novo link');
+    const form = h('form', { novalidate: true, on: { submit: async (e) => {
+      e.preventDefault(); err.textContent = ''; send.disabled = true;
+      try { await api.requestReset(email.value, await cap.need()); S.authEmail = email.value.trim(); S.rec = null; S.authMode = 'resetSent'; history.replaceState(null, '', location.pathname); render(); }
+      catch (ex) { err.textContent = ex.message; cap.reset(); send.disabled = false; }
+    } } }, field('E-mail da sua conta', email), cap.el, err, send);
+    const title = R.reason === 'expired' ? 'Link expirado ou já utilizado' : 'Link inválido';
+    return card(ico('alert', 'warn'), h('h2', { text: title }),
+      h('p', { class: 'muted', text: 'Por segurança, cada link de recuperação vale uma única vez e por pouco tempo. Peça um novo: nenhuma senha foi alterada.' }), form,
+      h('p', { class: 'small muted', text: 'Se este link era a confirmação do seu cadastro, volte ao login e peça o reenvio.' }),
+      back('Voltar ao login', recLeave));
   }
 
   function verifyBanner() {
@@ -402,7 +655,7 @@
     const seller = S.ags.filter((a) => a.sellerId === meId()).length, buyer = S.ags.filter((a) => a.buyerId === meId()).length;
     const hello = h('div', { class: 'hello' }, h('div', null, h('div', { class: 'eyebrow', text: new Date().toLocaleDateString(U.lang, { weekday: 'long', day: 'numeric', month: 'long' }) }), h('div', { style: { fontSize: '20px', fontWeight: 760, letterSpacing: '-.03em' } }, `Olá, ${me.name.split(' ')[0]} 👋`)),
       seg([['buyer', `${t('buying')} · ${buyer}`], ['seller', `${t('selling')} · ${seller}`], ...(S.dash && S.dash.hasRecurring ? [['recurring', t('recurring')]] : [])], r, (v) => { S.homeRole = v; sessionStorage.setItem('pacto8:homeRole', v); render(); }, 'Ver como'));
-    const left = h('div', null, verifyBanner(), hello, h('div', { class: 'section-h', style: { marginTop: '4px' } }, h('h2', null, t('pending')), h('span', { class: 'small muted', text: acts.length ? `${acts.length} ação(ões)` : '' })), stories, hero, stats,
+    const left = h('div', null, verifyBanner(), mfaBanner(), hello, h('div', { class: 'section-h', style: { marginTop: '4px' } }, h('h2', null, t('pending')), h('span', { class: 'small muted', text: acts.length ? `${acts.length} ação(ões)` : '' })), stories, hero, stats,
       h('div', { class: 'section-h' }, h('h2', null, r === 'buyer' ? 'Meus acordos' : r === 'recurring' ? 'Contratos recorrentes' : 'Acordos que vendi'), h('button', { class: 'link-btn', on: { click: () => { S.filters.ag = r; go('#/acordos'); } } }, t('seeAll'), icon('right', 16))),
       mine.length ? h('div', { class: 'hscroll' }, mine.slice(0, 8).map((a) => agCard(a))) : empty('doc', 'Nenhum acordo aqui', r === 'seller' ? 'Cadastre uma venda, serviço ou empréstimo e envie para aceite.' : 'Você ainda não comprou nada pelo PACTO.', r === 'seller' ? h('button', { class: 'btn', on: { click: () => newAgreement() } }, icon('plus', 18), t('newAgreement')) : null));
     const right = h('div', { class: 'aside' }, h('div', { class: 'section-h', style: { marginTop: '4px' } }, h('h2', null, t('activity')), h('span', { class: 'pill info' }, icon('hash', 12), 'auditável')),
@@ -1102,7 +1355,7 @@
   }
 
   /* ---------- Notificações ---------- */
-  const NT_ICON = { proposal: 'handshake', counter: 'swap', accepted: 'check', refused: 'x', payment: 'clip', review: 'eye', due: 'calendar', overdue: 'alert', early: 'zap', consolidation: 'layers', note: 'msg', settled: 'spark', joined: 'users', charge: 'repeat', delay: 'clock' };
+  const NT_ICON = { proposal: 'handshake', counter: 'swap', accepted: 'check', refused: 'x', payment: 'clip', review: 'eye', due: 'calendar', overdue: 'alert', early: 'zap', consolidation: 'layers', note: 'msg', settled: 'spark', joined: 'users', charge: 'repeat', delay: 'clock', security: 'shield' };
   function notificationsPage() {
     const list = S.ntf;
     const td = new Date().toDateString();
@@ -1130,32 +1383,34 @@
     const box = h('div', null, U.skeleton(1));
     const card = h('section', { class: 'card glass', id: 'mfa-card' }, h('h2', { style: { margin: '0 0 4px', fontSize: '16px' } }, 'Verificação em duas etapas'),
       h('p', { class: 'small muted', style: { margin: '0 0 10px' }, text: 'Obrigatória para aceitar propostas, renegociações, unificações, antecipações e novas datas, e para aprovar comprovantes. Use Google Authenticator, Microsoft Authenticator, 1Password ou similar.' }), box);
+    const recBox = h('div', { style: { margin: '8px 0' } });
+    const recShow = async () => {
+      let rs; try { rs = await api.mfaRecoveryStatus(); } catch (e) { recBox.replaceChildren(h('div', { class: 'small muted', text: 'Códigos de recuperação: não foi possível consultar agora.' })); return; }
+      const gen = h('button', { class: 'btn ghost sm', on: { click: async () => {
+        if (rs.active && !confirm('Gerar novos códigos? Os ' + rs.active + ' códigos atuais deixam de valer.')) return;
+        gen.disabled = true;
+        try { const r = await api.mfaRecoveryGenerate(); recBox.replaceChildren(recoveryCodesView(r.codes, recShow)); } catch (e) { handleErr(e); gen.disabled = false; }
+      } } }, icon('key', 16), rs.active ? 'Gerar novos códigos' : 'Gerar códigos de recuperação');
+      recBox.replaceChildren(h('div', { class: 'kv' }, h('span', { text: 'Códigos de recuperação' }),
+        rs.active ? pill(rs.active + ' válidos', 'ok') : pill('Ainda não gerados', 'warn')),
+        rs.active ? null : h('p', { class: 'small muted', style: { margin: '4px 0 8px' }, text: 'Gere e guarde os códigos agora: eles são a forma segura de recuperar a conta se você perder o celular.' }),
+        h('div', { class: 'actions' }, gen));
+    };
     const show = async () => {
       let st; try { st = await api.mfaStatus(); } catch (e) { box.replaceChildren(h('div', { class: 'err', text: e.message })); return; }
+      if (st.enabled) recShow();
       if (st.enabled) {
         box.replaceChildren(h('div', { class: 'row wrap', style: { gap: '8px', marginBottom: '8px' } }, pill('Ativa', 'ok'), pill(st.level === 'aal2' ? 'Confirmada nesta sessão' : 'Será pedida nas operações financeiras', st.level === 'aal2' ? 'ok' : 'info')),
           ...st.factors.map((f) => kv(f.name, 'desde ' + U.dateTime(f.createdAt))),
-          h('div', { class: 'actions' }, h('button', { class: 'btn ghost sm', on: { click: async () => {
+          recBox,
+          h('div', { class: 'actions' }, h('button', { class: 'link-btn', on: { click: () => recoveryDialog() } }, 'Perdi meu autenticador'), h('button', { class: 'btn ghost sm', on: { click: async () => {
             if (!confirm('Desativar a verificação em duas etapas? Você não conseguirá aceitar nem aprovar operações financeiras até ativá-la de novo.')) return;
             try { if (st.level !== 'aal2' && !(await stepUpDialog())) return; await api.mfaUnenroll(st.factors[0].id); toast('Verificação em duas etapas desativada.'); show(); } catch (e) { handleErr(e); }
           } } }, 'Desativar')));
         return;
       }
       box.replaceChildren(h('div', { class: 'row wrap', style: { gap: '8px', marginBottom: '10px' } }, pill('Desativada', 'warn')),
-        h('button', { class: 'btn sm lime', on: { click: async () => {
-          let en; try { en = await api.mfaEnroll(); } catch (e) { handleErr(e); return; }
-          const code = h('input', { class: 'input', inputmode: 'numeric', autocomplete: 'one-time-code', maxlength: '6', placeholder: '000000', 'aria-label': 'Código de 6 dígitos', style: { maxWidth: '180px', letterSpacing: '.25em' } });
-          const err = h('div', { class: 'err', role: 'alert' });
-          box.replaceChildren(
-            h('ol', { class: 'small', style: { margin: '0 0 10px', paddingLeft: '18px' } }, h('li', { text: 'Abra seu app autenticador e escaneie o QR code (ou digite a chave).' }), h('li', { text: 'Digite o código de 6 dígitos que aparecer.' })),
-            h('div', { class: 'row wrap', style: { gap: '16px', alignItems: 'center' } },
-              h('img', { src: en.qr, alt: 'QR code para o app autenticador', width: 168, height: 168, style: { background: '#fff', borderRadius: '14px', padding: '8px' } }),
-              h('div', { style: { minWidth: '200px', flex: 1 } }, h('div', { class: 'eyebrow', text: 'Chave (se não puder escanear)' }), h('code', { text: en.secret, style: { wordBreak: 'break-all', fontSize: '13px' } }),
-                h('div', { class: 'field', style: { marginTop: '10px' } }, h('label', { text: 'Código' }), code), err,
-                h('div', { class: 'actions' }, h('button', { class: 'btn sm', on: { click: async () => { try { await api.mfaVerify({ factorId: en.factorId, code: code.value }); toast('Verificação em duas etapas ativada.'); show(); } catch (e) { err.textContent = e.message; } } } }, icon('check', 16), 'Ativar'),
-                  h('button', { class: 'btn ghost sm', on: { click: show } }, 'Cancelar')))));
-          setTimeout(() => code.focus(), 50);
-        } } }, icon('shield', 16), 'Ativar verificação em duas etapas'));
+        h('button', { class: 'btn sm lime', on: { click: async () => { await mfaSetup(); S.mfaOn = undefined; mfaProbe(); show(); } } }, icon('shield', 16), 'Ativar verificação em duas etapas'));
     };
     show();
     return card;
@@ -1165,7 +1420,22 @@
     const name = h('input', { value: me.name, maxlength: '60' });
     const photoIn = h('input', { type: 'file', id: 'photo', accept: 'image/png,image/jpeg,image/webp', on: { change: async (e) => { try { const url = await resizePhoto(e.target.files[0]); await call(() => api.updateProfile(S.token, { photo: url }), 'Foto atualizada.'); } catch (x) { toast(x.message, 'err'); } } } });
     const pcur = h('input', { type: 'password', autocomplete: 'current-password' }), pnew = h('input', { type: 'password', autocomplete: 'new-password' });
+    const capPw = captchaBox();
     const sessBox = h('div', null, U.skeleton(1));
+    /* 8.2 · “Esqueci minha senha” (Supabase Auth): link por e-mail para o endereço cadastrado, sem pedir a senha atual */
+    const forgotBox = h('div', { 'aria-live': 'polite' });
+    const forgotNote = () => h('div', { class: 'note ok', role: 'status', style: { marginTop: '10px' } }, icon('mail', 18), h('span', null, `Se o e-mail da conta estiver correto, enviamos um link para ${maskEmail(S.me.email)}. Ele vale uma vez e por pouco tempo. Abra neste aparelho, escolha a nova senha e pronto: não precisa da senha atual. Não chegou em alguns minutos? Olhe o spam.`));
+    if (S.forgotUntil && Date.now() < S.forgotUntil) forgotBox.replaceChildren(forgotNote()); // a tela é redesenhada em segundo plano: o aviso não pode sumir
+    const capForgot = typeof capPw !== 'undefined' ? capPw : { need: async () => undefined, reset: () => {} };
+    const forgotBtn = h('button', { class: 'btn sm ghost', type: 'button', on: { click: async () => {
+      forgotBtn.disabled = true; let cool = 60000;
+      try {
+        const t = await capForgot.need(); await api.requestReset(S.me.email, t); capForgot.reset();
+        S.forgotUntil = Date.now() + 60000; forgotBox.replaceChildren(forgotNote());
+      } catch (e) { toast(e.message, 'err'); if (e.code === 'CAPTCHA') cool = 0; }
+      setTimeout(() => { forgotBtn.disabled = false; }, cool);
+    } } }, icon('mail', 16), 'Esqueci minha senha');
+    if (S.forgotUntil && Date.now() < S.forgotUntil) { forgotBtn.disabled = true; setTimeout(() => { forgotBtn.disabled = false; }, S.forgotUntil - Date.now()); }
     api.listSessions(S.token).then((ss) => sessBox.replaceChildren(...ss.map((x) => kv(`${x.current ? 'Esta aba' : 'Outra sessão'} · ${x.ua.slice(0, 28)}`, 'expira ' + U.dateTime(new Date(x.expiresAt).toISOString()))))).catch(() => {});
     const logBox = h('div');
     const prefs = me.prefs;
@@ -1191,7 +1461,9 @@
       h('section', { class: 'card glass' }, h('h2', { style: { margin: '0 0 12px', fontSize: '16px' } }, t('security')),
         h('div', { class: 'field' }, h('label', null, 'Bloquear após inatividade'), seg([[5, '5 min'], [10, '10 min'], [15, '15 min'], [30, '30 min']], prefs.autoLockMin, (v) => setPref('autoLockMin', v), 'Bloqueio automático')),
         h('div', { class: 'form-grid' }, field('Senha atual', pcur), field('Nova senha', pnew, 'Mín. 10 caracteres com letras e números.')),
-        h('button', { class: 'btn sm ghost', on: { click: () => call(() => api.changePassword(S.token, { current: pcur.value, next: pnew.value }), 'Senha alterada. Outras sessões foram encerradas.') } }, icon('key', 16), 'Alterar senha'),
+        capPw.el,
+        h('div', { class: 'actions' }, h('button', { class: 'btn sm ghost', on: { click: async () => { let t; try { t = await capPw.need(); } catch (e) { toast(e.message, 'err'); return; } await call(() => api.changePassword(S.token, { current: pcur.value, next: pnew.value, captchaToken: t }), 'Senha alterada. Outras sessões foram encerradas.'); capPw.reset(); } } }, icon('key', 16), 'Alterar senha'), REMOTE ? forgotBtn : null),
+        REMOTE ? h('p', { class: 'small muted', style: { margin: '8px 0 0' }, text: 'Perdeu a senha atual? Use “Esqueci minha senha”: enviamos um link para o e-mail cadastrado. Se você usa verificação em duas etapas, o código do app autenticador continua sendo exigido.' }) : null, REMOTE ? forgotBox : null,
         h('hr', { class: 'divider' }), h('div', { class: 'eyebrow', style: { marginBottom: '4px' } }, 'Sessões ativas'), sessBox,
         h('div', { class: 'actions' }, h('button', { class: 'btn ghost sm', on: { click: () => call(() => api.revokeOtherSessions(S.token), 'Outras sessões encerradas.') } }, 'Encerrar outras sessões'), h('button', { class: 'btn ghost sm', on: { click: lockNow } }, icon('lock', 16), t('lock')),
           h('button', { class: 'btn ghost sm', on: { click: async () => { const v = await api.verifyLog(S.token).catch(handleErr); if (v) logBox.replaceChildren(h('div', { class: 'note ' + (v.ok ? 'ok' : 'danger'), style: { marginTop: '10px' } }, icon(v.ok ? 'shield' : 'alert', 18), v.ok ? `Log íntegro: ${v.count} eventos encadeados. Topo: ${v.head.slice(0, 16)}…` : `Adulteração detectada no evento #${v.brokenAt}: ${v.reason}.`)); } } }, icon('hash', 16), 'Verificar integridade do log')), logBox),
@@ -1491,7 +1763,7 @@
 
   /* ---------- Assistente PACTO ---------- */
   const BLOCK = { proof_review: ['Suspenso: comprovante em análise', 'info'], delay_review: ['Suspenso: justificativa em análise', 'info'], muted: ['Silenciado neste contrato', 'muted'], paused: ['Pausado', 'warn'], disabled: ['Desligado', 'muted'], early: ['Em antecipação', ''], closed: ['Concluído', 'ok'] };
-  const OBX = { 'payment.due_soon': 'Vencimento próximo', 'payment.due_today': 'Vence hoje', 'payment.overdue': 'Em atraso', 'payment.proof_submitted': 'Comprovante enviado', 'payment.confirmed': 'Pagamento confirmado', 'negotiation.created': 'Negociação criada', 'negotiation.accepted': 'Negociação aceita', 'negotiation.rejected': 'Negociação recusada', 'delay.justification_submitted': 'Justificativa enviada', 'delay.justification_accepted': 'Justificativa aceita' };
+  const OBX = { 'payment.due_soon': 'Vencimento próximo', 'payment.due_today': 'Vence hoje', 'payment.overdue': 'Em atraso', 'payment.proof_submitted': 'Comprovante enviado', 'payment.confirmed': 'Pagamento confirmado', 'negotiation.created': 'Negociação criada', 'negotiation.accepted': 'Negociação aceita', 'negotiation.rejected': 'Negociação recusada', 'delay.justification_submitted': 'Justificativa enviada', 'delay.justification_accepted': 'Justificativa aceita', 'security.mfa_changed': 'Alerta de segurança (verificação em duas etapas)' };
   function assistantPage() {
     const p = { ...C.ASSISTANT_DEFAULTS, ...S.me.prefs };
     const save = (patch, msg) => call(() => api.updateProfile(S.token, { prefs: patch }), msg || 'Assistente atualizado.');
@@ -1541,7 +1813,7 @@
   /* ---------- render / roteamento ---------- */
   function render() {
     const root = $root();
-    if (S.recovery) { S.authMode = 'newpass'; document.documentElement.dataset.theme = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'; root.replaceChildren(authView()); return; }
+    if (S.rec) { document.documentElement.dataset.theme = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'; root.replaceChildren(recoveryView()); return; }
     if (!S.token) { document.documentElement.dataset.theme = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'; root.replaceChildren(authView()); return; }
     if (!S.me) { root.replaceChildren(h('div', { class: 'main', style: { paddingTop: '30px' } }, U.skeleton(4))); return; }
     const r = route(), y = window.scrollY;
@@ -1551,7 +1823,7 @@
       case 'inicio': title = t('home'); sub = 'PACTO · ' + t('tagline'); content = homePage(); fab = nb(); break;
       case 'acordos': title = t('agreements'); sub = `${S.ags.length} acordo(s) · agrupados por contrato`; content = agreementsPage(); fab = nb(); break;
       case 'acordo': { const a = findAg(r.id); title = a ? a.title : t('agreements'); sub = a ? `${role(a) === 'seller' ? 'Você vende para' : 'Você compra de'} ${other(a).name}` : ''; content = detailPage(r.id, r.sub); break; }
-      case 'novo': title = t('newAgreement'); sub = 'Identificação · condições · revisão'; content = wizardPage(); break;
+      case 'novo': if (!S.wiz) { newAgreement(); return; } /* carga/recarga direta de #/novo: cria o rascunho e desenha uma única vez */ title = t('newAgreement'); sub = 'Identificação · condições · revisão'; content = wizardPage(); break;
       case 'pagamentos': title = t('payments'); sub = 'Parcelas agrupadas por acordo'; content = paymentsPage(); break;
       case 'negociacoes': title = t('negotiations'); sub = 'Propostas, contrapropostas, unificações e antecipações'; content = negotiationsPage(); break;
       case 'unificar': title = 'Unificar dívidas'; sub = 'Some saldos abertos sem perder a origem'; content = unifyPage(); break;
@@ -1587,14 +1859,18 @@
     if (!(window.crypto && crypto.subtle)) { $root().replaceChildren(h('div', { class: 'auth' }, h('div', { class: 'card glass', style: { maxWidth: '480px' } }, h('h2', null, 'Abra via http://localhost ou https'), h('p', null, 'O PACTO usa WebCrypto (PBKDF2, SHA-256), que o navegador só libera em contexto seguro. Rode “npx serve” ou “python3 -m http.server” na pasta do app.')))); return; }
     if (REMOTE) {
       api.onAuthEvent((ev) => {
-        if (ev === 'PASSWORD_RECOVERY') { S.recovery = true; render(); }
-        if (ev === 'SIGNED_OUT' && S.token && !S.recovery) { signOutLocal(); }
+        if (ev === 'PASSWORD_RECOVERY') recStart();
+        if (ev === 'SIGNED_OUT' && S.token && !S.rec) { signOutLocal(); }
       });
-      const linkErr = /error_description=([^&]+)/.exec(location.hash || '');
+      const AL = parseAuthLink(BOOT_URL);
+      if (AL.kind === 'confirm' || AL.kind === 'error') history.replaceState(null, '', location.pathname + '#/nova-senha'); // tira códigos da barra de endereço
+      if (AL.kind === 'recovery') { await recStart(); history.replaceState(null, '', location.pathname + '#/nova-senha'); return; } // o supabase-js precisa ler o #access_token antes de limparmos a URL
+      if (AL.kind === 'confirm') { S.rec = { stage: 'confirm', tokenHash: AL.tokenHash }; render(); return; }
+      if (AL.kind === 'error') { S.rec = { stage: 'error', reason: AL.reason }; render(); return; }
+      const pf = sessionStorage.getItem('pacto8:prefill'); if (pf) { S.authEmail = pf; S.authNotice = sessionStorage.getItem('pacto8:notice') || null; sessionStorage.removeItem('pacto8:prefill'); sessionStorage.removeItem('pacto8:notice'); }
+      if (/^#(access_token|type|error)=/.test(BOOT_URL.hash) || /[?&](acao|code|token_hash)=/.test(BOOT_URL.search)) history.replaceState(null, '', location.pathname + '#/inicio');
       const r = await api.restore();
-      if (/^#(access_token|error|type)=/.test(location.hash || '') || /[?&](code|token_hash)=/.test(location.search)) history.replaceState(null, '', location.pathname + '#/inicio');
-      if (linkErr) toast('Link inválido ou expirado: ' + decodeURIComponent(linkErr[1].replace(/\+/g, ' ')) + '. Peça um novo.', 'err');
-      if (r && !S.recovery) { setToken(r.token); try { await api.claim(S.token); } catch {} await refresh(); }
+      if (r && !S.rec) { setToken(r.token); try { await api.claim(S.token); } catch {} await refresh(); }
       else { S.token = null; sessionStorage.removeItem('pacto8:token'); render(); }
       setInterval(() => { if (S.token && !S.locked) api.runReminders(S.token).then((n) => { if (n) refresh(); }).catch(() => {}); }, 15 * 60000);
       return;
