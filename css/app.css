@@ -782,6 +782,13 @@ select { height: 40px; padding: 0 10px; border-radius: 12px; border: 1px solid v
   border-color: rgba(12, 42, 38, .16);
   color: var(--ink);
 }
+/* PRB-05 (homologação): anel de foco bem visível nos campos das telas de autenticação/bloqueio (o estilo global zera o outline) */
+.auth-panel .input:focus-visible,
+.auth-panel .field input:not([type=checkbox]):not([type=range]):not([type=file]):focus-visible,
+.auth-panel .field select:focus-visible,
+.auth-panel .field textarea:focus-visible,
+.lock-card .input:focus-visible,
+.lock-card input:not([type=checkbox]):not([type=range]):not([type=file]):focus-visible { outline: 2px solid #0B4D3E; outline-offset: 2px; border-color: #0B4D3E; }
 .lockscreen {
   background:
     radial-gradient(80% 60% at 90% 0%, rgba(197, 255, 77, .14), transparent 56%),
