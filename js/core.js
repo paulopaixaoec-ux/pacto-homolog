@@ -16,11 +16,28 @@
   const MAX_CENTS = 10_000_000_000;
   const isInt = (v) => Number.isSafeInteger(v) && Math.abs(v) <= MAX_CENTS;
   const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
-  // PRB-02: pagamento não pode ter data futura (tolerância de 1 dia sobre a data UTC do registro, por causa de fusos)
+  /* Fuso do produto: America/Sao_Paulo (conversão por fuso nomeado, não por deslocamento fixo).
+     brtDate(x) → 'AAAA-MM-DD' do calendário de São Paulo para o instante x (Date, número ou texto ISO com fuso).
+     brtMonth(x) → 'AAAA-MM'. Instante inválido → ''. */
+  const BRT_TZ = 'America/Sao_Paulo';
+  let _brtFmt = null;
+  function brtDate(x) {
+    const t = x instanceof Date ? x.getTime() : typeof x === 'number' ? x : Date.parse(String(x || ''));
+    if (!Number.isFinite(t)) return '';
+    try {
+      _brtFmt = _brtFmt || new Intl.DateTimeFormat('en-US', { timeZone: BRT_TZ, year: 'numeric', month: '2-digit', day: '2-digit' });
+      const p = {}; _brtFmt.formatToParts(new Date(t)).forEach((q) => { p[q.type] = q.value; });
+      return `${p.year}-${p.month}-${p.day}`;
+    } catch (e) { return new Date(t - 3 * 3600000).toISOString().slice(0, 10); } // sem dados de fuso no ambiente: Brasil sem horário de verão (UTC−3)
+  }
+  const brtMonth = (x) => brtDate(x).slice(0, 7);
+  /* PRB-02: a data efetiva do pagamento não pode ser posterior a HOJE em São Paulo.
+     Referência = carimbo `at` gravado pelo SERVIDOR; comparação exata de datas de calendário, sem tolerância:
+     22:30 em SP (já é o dia seguinte em UTC) ainda é "hoje" em SP; amanhã em SP é recusado. */
   function paidInFuture(paidAt, at) {
-    const ref = Date.parse(at || '');
-    if (!ref) return false; // sem carimbo de tempo confiável (ex.: testes de núcleo) não há referência de "hoje"
-    return String(paidAt) > new Date(ref + 864e5).toISOString().slice(0, 10);
+    const today = brtDate(at);
+    if (!today) return false; // sem carimbo de tempo confiável (ex.: testes de núcleo) não há referência de "hoje"
+    return String(paidAt) > today;
   }
   function isISODate(s) {
     if (typeof s !== 'string' || !ISO_DATE.test(s)) return false;
@@ -785,9 +802,10 @@
         if (['replaced', 'consolidated'].includes(s.status) && !s.paidCents) return;
         const open = OPEN.includes(s.status) || s.status === 'review';
         const rem = remainingOf(s);
+        // Semântica (documentada em docs/SEMANTICA_DATAS.md): "Recebido no mês" do painel = mês, em São Paulo, da APROVAÇÃO (reviewedAt); a data efetiva do pagamento (paidAt) nunca é alterada.
         // PRB-04: parcela quitada por antecipação guarda a aprovação na antecipação (closedAt), não no item → usa-a como data
         const approvedAt = (x) => x.reviewedAt || (x.earlyId && ((a.early || []).find((e) => e.id === x.earlyId) || {}).closedAt) || '';
-        const paidThisMonth = s.reports.filter((x) => x.status === 'approved' && approvedAt(x).slice(0, 7) === month).reduce((t, x) => t + x.amountCents, 0);
+        const paidThisMonth = s.reports.filter((x) => x.status === 'approved' && brtMonth(approvedAt(x)) === month).reduce((t, x) => t + x.amountCents, 0);
         if (r === 'seller') {
           if (open && s.due.slice(0, 7) === month) add(seller.forecastMonth, item(a, s), rem);
           if (paidThisMonth) add(seller.receivedMonth, item(a, s, { paid: true }), paidThisMonth);
@@ -939,7 +957,7 @@
   }
 
   return {
-    PactoError, fail, isISODate, plusMonths, plusDays, addPeriod, daysBetween, parseMoney, cleanText, isEmail,
+    PactoError, fail, brtDate, brtMonth, BRT_TZ, isISODate, plusMonths, plusDays, addPeriod, daysBetween, parseMoney, cleanText, isEmail,
     calcPlan, compareReference, isParty, roleOf, counterpartOf, assertParty, openBalance, totals, installmentStatus, remainingOf, OPEN,
     createAgreement, proposeVersion, respondVersion, pendingVersion, summarizeTerms, normalizeTerms,
     sniffType, validateAttachment, MAX_FILE, ALLOWED_TYPES, MAX_CENTS, reportPayment, reviewPayment,

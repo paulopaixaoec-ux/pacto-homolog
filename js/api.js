@@ -50,7 +50,7 @@
   function createPactoAPI({ adapter = memoryAdapter(), clock = { now: () => new Date() }, iterations = 210000, idleDefaultMin = 10 } = {}) {
     const now = () => clock.now();
     const at = () => now().toISOString();
-    const today = () => { const d = now(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+    const today = () => C.brtDate(now()); // "hoje" no calendário de America/Sao_Paulo
     const uid = (p) => p + '_' + C.randomToken(9);
     const load = () => {
       const s = adapter.load();

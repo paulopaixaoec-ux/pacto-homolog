@@ -233,7 +233,7 @@
 
     const api = {
       kind: 'supabase',
-      today: () => { const d = now(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; },
+      today: () => C.brtDate(now()),
       now,
       /* ---------- autenticação (Supabase Auth) ---------- */
       async restore() { const { data } = await sb.auth.getSession(); if (!data || !data.session) return null; return { token: await startLocal(data.session) }; },
