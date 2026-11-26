@@ -653,3 +653,31 @@ select { height: 40px; padding: 0 10px; border-radius: 12px; border: 1px solid v
 .seg { overflow-x: auto; scrollbar-width: none; }
 .seg::-webkit-scrollbar { display: none; }
 @media (max-width: 420px) { .seg button { padding: 0 10px; font-size: 12.5px; } }
+
+/* 8.2 · tour de boas-vindas: o fundo não captura cliques (o app segue usável); só o cartão é interativo */
+.tour { position: fixed; inset: 0; z-index: 70; pointer-events: none; animation: tour-in .28s ease both; }
+.tour[hidden] { display: none; }
+.tour.out { animation: tour-out .2s ease both; }
+.tour-dim { position: absolute; inset: 0; background: rgba(4, 22, 20, .42); transition: opacity .3s ease; }
+.tour-spot { position: fixed; border-radius: 18px; box-shadow: 0 0 0 9999px rgba(4, 22, 20, .42), 0 0 0 2px var(--lime-strong), 0 0 0 7px rgba(200, 241, 105, .28);
+  transition: left .38s var(--spring, ease), top .38s var(--spring, ease), width .38s var(--spring, ease), height .38s var(--spring, ease), opacity .25s ease; }
+.tour.has-target .tour-spot { animation: tour-pulse 2.4s ease-in-out infinite; }
+.tour-card { position: fixed; pointer-events: auto; padding: 16px 18px 14px; border-radius: 22px; transition: left .38s var(--spring, ease), top .38s var(--spring, ease); animation: tour-card .32s var(--spring, ease) both; }
+.tour-card > * { position: relative; z-index: 2; }
+.tour-card h2 { margin: 6px 0 6px; font-size: 18px; letter-spacing: -.02em; outline: none; }
+.tour-card p { margin: 0 0 12px; font-size: 14px; line-height: 1.45; }
+.tour-card .eyebrow { margin-top: 10px; }
+.tour-ico { width: 36px; height: 36px; border-radius: 12px; }
+.tour-dots { display: flex; gap: 6px; margin: 0 0 12px; }
+.tour-dots i { width: 7px; height: 7px; border-radius: 4px; background: var(--line, rgba(0,0,0,.12)); transition: width .3s ease, background .3s ease; }
+.tour-dots i.done { background: var(--lime-strong); opacity: .6; }
+.tour-dots i.on { width: 22px; background: var(--lime-strong); }
+.tour-actions { display: flex; justify-content: space-between; gap: 10px; }
+.tour-skip { font-size: 13px; }
+@keyframes tour-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes tour-out { from { opacity: 1; } to { opacity: 0; } }
+@keyframes tour-card { from { opacity: 0; transform: translateY(8px) scale(.98); } to { opacity: 1; transform: none; } }
+@keyframes tour-pulse { 0%, 100% { box-shadow: 0 0 0 9999px rgba(4, 22, 20, .42), 0 0 0 2px var(--lime-strong), 0 0 0 7px rgba(200, 241, 105, .28); } 50% { box-shadow: 0 0 0 9999px rgba(4, 22, 20, .42), 0 0 0 2px var(--lime-strong), 0 0 0 12px rgba(200, 241, 105, .12); } }
+@media (prefers-reduced-motion: reduce) { .tour, .tour.out, .tour-card, .tour.has-target .tour-spot { animation: none !important; } .tour-spot, .tour-card, .tour-dots i { transition: none !important; } }
+.tour-card.glass-strong { --glass: rgba(255,255,255,.95); --glass-2: rgba(255,255,255,.98); }
+[data-theme='dark'] .tour-card.glass-strong { --glass: rgba(14, 44, 40, .96); --glass-2: rgba(20, 56, 51, .98); }

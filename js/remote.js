@@ -313,6 +313,19 @@
         stopLocal();
         return true;
       },
+      /* ---------- tour de boas-vindas: conclusão guardada por pessoa no Supabase (vale em todos os aparelhos) ---------- */
+      async tourStatus() {
+        const s = await requireSession();
+        const { data, error } = await sb.from('user_onboarding').select('tour_status,tour_done_at').eq('user_id', s.user.id).maybeSingle();
+        if (error) throw new PactoError('SERVER', 'Não foi possível ler o tour.');
+        return data ? { done: true, status: data.tour_status, at: data.tour_done_at } : { done: false };
+      },
+      async tourMark(status) {
+        await requireSession();
+        const { data, error } = await sb.rpc('pacto_tour_mark', { p_status: status === 'skipped' ? 'skipped' : 'completed', p_version: 1 });
+        if (error) throw new PactoError('SERVER', 'Não foi possível salvar o tour.');
+        return { done: true, at: data };
+      },
       async recoveryCancel() { stopLocal(); try { await sb.auth.signOut({ scope: 'local' }); } catch {} return true; },
       async changePassword(token, { current, next, captchaToken }) {
         const probs = C.passwordProblems(next); if (probs.length) throw new PactoError('WEAK_PASSWORD', 'Senha fraca: ' + probs.join(', ') + '.');

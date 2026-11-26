@@ -1,17 +1,44 @@
 {
-  "name": "PACTO · O combinado tem valor.",
+  "id": "./",
+  "name": "PACTO",
   "short_name": "PACTO",
-  "description": "Acordos, parcelas, comprovantes e negociações bilaterais — protótipo de demonstração.",
+  "description": "Seus acordos, pagamentos e compromissos em um só lugar. Simples, organizado e seguro.",
   "lang": "pt-BR",
-  "start_url": "./index.html",
+  "dir": "ltr",
+  "start_url": "./",
   "scope": "./",
   "display": "standalone",
+  "orientation": "any",
   "background_color": "#EAF5EC",
   "theme_color": "#0B4D3E",
+  "categories": [
+    "finance",
+    "productivity"
+  ],
   "icons": [
-    { "src": "brand/pacto-icon.svg", "sizes": "any", "type": "image/svg+xml" },
-    { "src": "brand/icon-192.png", "sizes": "192x192", "type": "image/png" },
-    { "src": "brand/icon-512.png", "sizes": "512x512", "type": "image/png" },
-    { "src": "brand/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+    {
+      "src": "brand/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "brand/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "brand/icon-maskable-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "brand/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
   ]
 }

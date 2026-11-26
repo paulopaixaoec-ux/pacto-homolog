@@ -68,6 +68,7 @@
     } catch (e) { if (e.code === 'LOCKED') { S.loading = false; showLock(); return; } handleErr(e); }
     render();
     mfaProbe();
+    tourTick();
   }
   function signOutLocal() { S.token = null; S.me = null; S.mfaOn = undefined; S.forgotUntil = 0; sessionStorage.removeItem('pacto8:token'); hideLock(); closeSheet(true); render(); }
   function applyPrefs() {
@@ -147,7 +148,7 @@
     const side = h('nav', { class: 'side glass', 'aria-label': 'Navegação principal' },
       h('div', { class: 'brand-row' }, logo(), h('button', { class: 'icon-btn', 'aria-label': t('collapse'), title: t('collapse'), on: { click: () => { S.collapsed = !S.collapsed; localStorage.setItem('pacto8:ui:collapsed', S.collapsed ? '1' : '0'); document.querySelector('.app').classList.toggle('collapsed', S.collapsed); } } }, icon('sidebar', 18))),
       h('div', { class: 'tag' }, t('tagline')),
-      SIDE.map(([p, ic, k]) => h('button', { class: 'nav-item', 'aria-current': active === p ? 'page' : null, title: t(k), on: { click: () => go('#/' + p) } }, icon(ic, 20), h('span', { class: 'lbl', text: t(k) }),
+      SIDE.map(([p, ic, k]) => h('button', { class: 'nav-item', 'aria-current': active === p ? 'page' : null, title: t(k), dataset: { p }, on: { click: () => go('#/' + p) } }, icon(ic, 20), h('span', { class: 'lbl', text: t(k) }),
         p === 'negociacoes' && acts ? [h('span', { class: 'cnt', text: String(acts) }), h('i', { class: 'ndot' })] : null,
         p === 'notificacoes' && nu ? [h('span', { class: 'cnt', text: String(nu) }), h('i', { class: 'ndot' })] : null)),
       h('button', { class: 'btn lime', style: { margin: '14px 4px 0' }, on: { click: () => newAgreement() } }, icon('plus', 18), h('span', { class: 'lbl', text: t('newAgreement') })),
@@ -375,6 +376,124 @@
       h('div', { style: { flex: 1, minWidth: '200px' } }, h('b', null, 'Ative a verificação em duas etapas'), h('div', { class: 'small muted', text: 'Necessária para aceitar propostas, aprovar comprovantes e renegociar. Leva 2 minutos, com QR code e passo a passo para iPhone e Android.' })),
       h('button', { class: 'btn sm lime', on: { click: async () => { await mfaSetup(); S.mfaOn = undefined; mfaProbe(); } } }, 'Ativar agora')));
   }
+  /* ---------- 8.2 · tour de boas-vindas (primeiro acesso) ----------
+     Aparece sozinho só quando a pessoa já entrou no app (nunca nas telas de login, MFA, bloqueio, recuperação ou no Novo acordo)
+     e ainda não concluiu nem pulou o tour. A conclusão fica no Supabase (user_onboarding, só a própria linha) e vale em todos os aparelhos.
+     Não bloqueia o app: o fundo não captura cliques; Pular/Esc fecham a qualquer momento. Respeita prefers-reduced-motion. */
+  const TOUR = { uid: null, status: null, active: false, step: 0, replay: false, el: null, prevFocus: null, raf: 0, mo: null };
+  const tourKey = (uid) => 'pacto8:tour:' + uid;
+  const tourFirst = () => { const n = String((S.me && S.me.name) || '').replace(/^\s*(\[[^\]]*\]\s*)+/, '').trim(); return n.split(/\s+/)[0] || 'você'; };
+  function tourSteps() {
+    return [
+      { id: 'welcome', title: `Olá, ${tourFirst()}! Boas-vindas ao PACTO`, text: 'Aqui o combinado tem valor: acordos às claras entre as duas partes. Em menos de um minuto, mostramos onde fica cada coisa.' },
+      { id: 'novo', targets: ['.fab', '.side .btn.lime'], icon: 'plus', title: 'Crie um acordo e convide a outra parte', text: 'Defina valor, parcelas e vencimentos e informe o e-mail da outra pessoa. O acordo só vale depois que os dois aceitam.' },
+      { id: 'parcelas', targets: ['.tabbar .tab[data-p="calendario"]', '.side .nav-item[data-p="pagamentos"]'], icon: 'calendar', title: 'Parcelas, vencimentos e pagamentos', text: 'No Calendário você vê o que vence e quando; em Pagamentos (no celular, em Mais), cada parcela com o seu status.' },
+      { id: 'comprovantes', targets: ['.tabbar .tab[data-p="acordos"]', '.side .nav-item[data-p="acordos"]'], icon: 'clip', title: 'Comprovantes e confirmação', text: 'Pagou? Anexe o comprovante na parcela. Ela fica Em análise até a outra parte confirmar ou pedir correção. Depois de aprovado, não muda mais.' },
+      { id: 'negociacoes', targets: ['.tabbar .tab[data-p="negociacoes"]', '.side .nav-item[data-p="negociacoes"]'], icon: 'handshake', title: 'Negocie com transparência', text: 'Proponha nova data, renegociação, antecipação ou unificação de dívidas. A outra parte aceita, recusa ou contrapropõe, e tudo fica no histórico.' },
+      { id: 'seguranca', targets: ['.avatar-btn'], icon: 'shield', title: 'Sua conta protegida', text: REMOTE ? 'Em Perfil → Segurança: verificação em duas etapas, bloqueio automático, sessões ativas e troca de senha. Aceites e aprovações pedem o código do autenticador.' : 'Em Perfil → Segurança: bloqueio automático, sessões ativas e troca de senha.' },
+      { id: 'fim', title: 'Tudo pronto!', text: 'Que tal começar agora? Você pode rever este tour quando quiser em Perfil ou no Assistente.' },
+    ];
+  }
+  function tourEligible() {
+    if (!S.token || !S.me || S.rec || S.locked) return false;
+    if (document.querySelector('.lockscreen, .sheet-bg, #splash')) return false; // bloqueio, MFA, step-up, recuperação de MFA, folhas abertas
+    if (route().page === 'novo') return false;
+    if (REMOTE && typeof S.mfaOn !== 'boolean') return false; // espera o guia do 2FA (primeiro acesso) terminar
+    return true;
+  }
+  async function tourLoad() {
+    const uid = meId(); if (!uid || TOUR.uid === uid && TOUR.status) return;
+    TOUR.uid = uid; TOUR.status = 'loading';
+    if (localStorage.getItem(tourKey(uid))) { TOUR.status = 'done'; return; }
+    if (!REMOTE) { TOUR.status = 'pending'; return; }
+    try { const st = await api.tourStatus(); if (TOUR.uid !== uid) return; TOUR.status = st.done ? 'done' : 'pending'; if (st.done) localStorage.setItem(tourKey(uid), '1'); }
+    catch { if (TOUR.uid === uid) TOUR.status = 'error'; } // sem resposta: não mostra (tenta de novo no próximo carregamento)
+  }
+  async function tourTick() {
+    if (!S.token || !S.me) { if (TOUR.active) tourClose(); return; }
+    if (TOUR.uid !== meId()) { if (TOUR.active) tourClose(); TOUR.status = null; }
+    if (!TOUR.status) await tourLoad();
+    if (TOUR.active) { tourPlace(); return; }
+    if (TOUR.status === 'pending' && tourEligible()) tourOpen(false);
+  }
+  function tourOpen(replay) {
+    if (TOUR.active) tourClose();
+    TOUR.active = true; TOUR.replay = !!replay; TOUR.step = 0; TOUR.prevFocus = document.activeElement;
+    const el = h('div', { id: 'tour', class: 'tour', role: 'dialog', 'aria-modal': 'false', 'aria-labelledby': 'tour-title', 'aria-describedby': 'tour-text',
+      on: { keydown: (e) => { if (e.key === 'Escape') { e.preventDefault(); tourFinish('skipped'); } else if (e.key === 'ArrowRight' && !/INPUT|TEXTAREA/.test(e.target.tagName)) tourGo(1); else if (e.key === 'ArrowLeft') tourGo(-1); } } });
+    TOUR.el = el; document.body.appendChild(el);
+    TOUR.onWin = () => tourPlace(); addEventListener('resize', TOUR.onWin); addEventListener('scroll', TOUR.onWin, { passive: true });
+    TOUR.mo = new MutationObserver(() => tourPlace()); TOUR.mo.observe($root(), { childList: true, subtree: true });
+    tourDraw();
+  }
+  function tourClose() {
+    TOUR.active = false; cancelAnimationFrame(TOUR.raf);
+    if (TOUR.mo) TOUR.mo.disconnect(); TOUR.mo = null;
+    if (TOUR.onWin) { removeEventListener('resize', TOUR.onWin); removeEventListener('scroll', TOUR.onWin); }
+    const el = TOUR.el; TOUR.el = null;
+    if (el) { el.classList.add('out'); setTimeout(() => el.remove(), matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 220); }
+    const f = TOUR.prevFocus; TOUR.prevFocus = null; if (f && f.isConnected && f.focus) try { f.focus(); } catch {}
+  }
+  async function tourFinish(status, then) {
+    const uid = TOUR.uid; tourClose(); TOUR.status = 'done';
+    if (uid) localStorage.setItem(tourKey(uid), '1');
+    if (REMOTE && S.token) api.tourMark(status).catch(() => {}); // grava no servidor (vale nos outros aparelhos); falha não atrapalha o uso
+    if (status === 'skipped' && !TOUR.replay) toast('Tudo bem! Você pode rever o tour em Perfil ou no Assistente.');
+    if (then) then();
+  }
+  function tourGo(d) { const n = tourSteps().length; const s = Math.max(0, Math.min(n - 1, TOUR.step + d)); if (s === TOUR.step) return; TOUR.step = s; tourDraw(); }
+  function tourTarget(step) {
+    for (const sel of step.targets || []) {
+      for (const el of document.querySelectorAll('#root ' + sel)) { const r = el.getBoundingClientRect(); if (r.width > 0 && r.height > 0 && getComputedStyle(el).visibility !== 'hidden') return el; }
+    }
+    return null;
+  }
+  function tourDraw() {
+    const el = TOUR.el; if (!el) return;
+    const steps = tourSteps(), st = steps[TOUR.step], n = steps.length, last = TOUR.step === n - 1, firstStep = TOUR.step === 0;
+    const back = h('button', { class: 'btn ghost sm', type: 'button', disabled: firstStep, on: { click: () => tourGo(-1) } }, icon('left', 16), 'Voltar');
+    const next = last
+      ? h('button', { class: 'btn sm lime', type: 'button', id: 'tour-cta', on: { click: () => tourFinish('completed', () => newAgreement()) } }, icon('plus', 16), 'Criar meu primeiro acordo')
+      : h('button', { class: 'btn sm', type: 'button', id: 'tour-next', on: { click: () => tourGo(1) } }, firstStep ? 'Começar' : 'Avançar', icon('right', 16));
+    const skip = h('button', { class: 'link-btn tour-skip', type: 'button', on: { click: () => tourFinish(last ? 'completed' : 'skipped') } }, last ? 'Agora não' : 'Pular');
+    const dots = h('div', { class: 'tour-dots', 'aria-hidden': 'true' }, steps.map((_, i) => h('i', { class: i === TOUR.step ? 'on' : (i < TOUR.step ? 'done' : '') })));
+    const head = firstStep ? h('div', { class: 'tour-brand' }, logo(34)) : st.icon ? h('span', { class: 'ev-ico ok tour-ico', 'aria-hidden': 'true' }, icon(st.icon, 18)) : h('span', { class: 'ev-ico ok tour-ico', 'aria-hidden': 'true' }, icon('check', 18));
+    const card = h('div', { class: 'tour-card glass-strong', dataset: { step: st.id } },
+      h('div', { class: 'row between', style: { alignItems: 'center' } }, head, skip),
+      h('div', { class: 'eyebrow', 'aria-live': 'polite', text: `Passo ${TOUR.step + 1} de ${n}` }),
+      h('h2', { id: 'tour-title', tabindex: '-1', text: st.title }),
+      h('p', { id: 'tour-text', class: 'muted', text: st.text }),
+      dots, h('div', { class: 'tour-actions' }, back, next));
+    el.replaceChildren(h('div', { class: 'tour-dim', 'aria-hidden': 'true' }), h('div', { class: 'tour-spot', 'aria-hidden': 'true' }), card);
+    el.dataset.step = st.id;
+    const tg = tourTarget(st); if (tg) { const r = tg.getBoundingClientRect(); if (r.top < 0 || r.bottom > innerHeight) tg.scrollIntoView({ block: 'center', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' }); }
+    tourPlace();
+    requestAnimationFrame(() => { const f = last ? next : el.querySelector('#tour-title'); if (f) f.focus({ preventScroll: true }); });
+  }
+  function tourPlace() {
+    cancelAnimationFrame(TOUR.raf);
+    TOUR.raf = requestAnimationFrame(() => {
+      const el = TOUR.el; if (!el) return;
+      if (!S.token) { tourClose(); return; }
+      el.hidden = !!(S.locked || document.querySelector('.lockscreen')); // bloqueio/MFA por cima: o tour espera
+      const st = tourSteps()[TOUR.step], tg = tourTarget(st), spot = el.querySelector('.tour-spot'), dim = el.querySelector('.tour-dim'), card = el.querySelector('.tour-card');
+      if (!spot || !card) return;
+      const W = innerWidth, H = innerHeight, cw = Math.min(380, W - 24), mob = W < 720;
+      card.style.width = cw + 'px';
+      if (!tg) { spot.style.opacity = '0'; dim.style.opacity = '1'; card.style.left = Math.round((W - cw) / 2) + 'px'; card.style.top = Math.max(12, Math.round((H - card.offsetHeight) / 2)) + 'px'; el.classList.remove('has-target'); return; }
+      const r = tg.getBoundingClientRect(), pad = 8;
+      Object.assign(spot.style, { opacity: '1', left: (r.left - pad) + 'px', top: (r.top - pad) + 'px', width: (r.width + pad * 2) + 'px', height: (r.height + pad * 2) + 'px' });
+      dim.style.opacity = '0'; el.classList.add('has-target');
+      const ch = card.offsetHeight; let left, top;
+      if (mob) { left = (W - cw) / 2; top = (r.top + r.height / 2 > H / 2) ? Math.max(12, r.top - pad - 14 - ch) : Math.min(H - ch - 12, r.bottom + pad + 14); }
+      else if (r.right + pad + 18 + cw < W - 12) { left = r.right + pad + 18; top = r.top + r.height / 2 - ch / 2; }
+      else if (r.left - pad - 18 - cw > 12) { left = r.left - pad - 18 - cw; top = r.top + r.height / 2 - ch / 2; }
+      else { left = Math.min(W - cw - 12, Math.max(12, r.left + r.width / 2 - cw / 2)); top = r.bottom + pad + 14 + ch < H ? r.bottom + pad + 14 : Math.max(12, r.top - pad - 14 - ch); }
+      card.style.left = Math.round(Math.max(12, Math.min(W - cw - 12, left))) + 'px'; card.style.top = Math.round(Math.max(12, Math.min(H - ch - 12, top))) + 'px';
+    });
+  }
+  function tourReplay() { if (!S.me) return; TOUR.uid = meId(); go('#/inicio'); setTimeout(() => tourOpen(true), 80); }
+  setInterval(() => { tourTick(); }, 1500);
   ['pointerdown', 'keydown', 'wheel', 'touchstart'].forEach((ev) => addEventListener(ev, () => {
     S.lastAct = Date.now();
     if (S.token && !S.locked && Date.now() - S.lastTouch > 45000) { S.lastTouch = Date.now(); api.touch(S.token).catch((e) => { if (e.code === 'LOCKED') showLock(); }); }
@@ -1452,7 +1571,7 @@
       h('section', { class: 'card glass' }, h('h2', { style: { margin: '0 0 4px', fontSize: '16px' } }, t('prefs')), h('p', { class: 'small muted', style: { margin: '0 0 6px' }, text: 'Lembretes de vencimento sem duplicidade (um por parcela e janela).' }),
         toggle('7 dias antes do vencimento', prefs.d7, (v) => setPref('d7', v)), toggle('3 dias antes', prefs.d3, (v) => setPref('d3', v)), toggle('No dia do vencimento', prefs.d0, (v) => setPref('d0', v)), toggle('Parcelas em atraso', prefs.overdue, (v) => setPref('overdue', v)),
         toggle('E-mail', false, () => {}, { disabled: true, badge: 'não ativo' }), toggle('Push no celular', false, () => {}, { disabled: true, badge: 'não ativo' }),
-        h('button', { class: 'btn ghost sm', style: { marginTop: '8px' }, on: { click: () => go('#/assistente') } }, icon('robot', 16), 'Mais ajustes no Assistente PACTO')),
+        h('div', { class: 'actions', style: { marginTop: '8px' } }, h('button', { class: 'btn ghost sm', on: { click: () => go('#/assistente') } }, icon('robot', 16), 'Mais ajustes no Assistente PACTO'), h('button', { class: 'btn ghost sm', id: 'tour-replay-perfil', on: { click: () => tourReplay() } }, icon('spark', 16), 'Rever o tour de boas-vindas'))),
       h('section', { class: 'card glass' }, h('h2', { style: { margin: '0 0 4px', fontSize: '16px' } }, 'Privacidade do contato'),
         toggle('Mostrar meu e-mail para quem tem acordo comigo', !!prefs.shareContact, (v) => setPref('shareContact', v)),
         h('p', { class: 'small muted', style: { margin: '6px 0 0' }, text: 'Desligado por padrão. Ninguém fora dos seus acordos vê seus dados; inadimplência nunca é exibida publicamente.' })),
@@ -1795,7 +1914,7 @@
           h('button', { class: 'btn ghost sm', on: { click: () => call(() => api.runReminders(S.token).then((n) => { toast(n ? `${n} lembrete(s) novo(s).` : 'Nenhum lembrete novo agora (sem duplicidade).'); return n; })) } }, icon('refresh', 16), 'Verificar agora'))),
       h('section', null, h('div', { class: 'section-h' }, h('h2', null, 'Por contrato')), statusBox),
       h('section', null, h('div', { class: 'section-h' }, h('h2', null, 'Fila de integrações (outbox)'), pill('nada é enviado nesta fase', 'muted')), h('p', { class: 'small muted', style: { margin: '0 0 8px' }, text: 'Eventos gravados de forma desacoplada para futuras integrações (e-mail, push, Leads, WhatsApp). Nenhuma integração está ativa.' }), outBox),
-      h('button', { class: 'btn ghost sm', on: { click: () => go('#/notificacoes') } }, icon('bell', 16), 'Histórico de notificações'));
+      h('div', { class: 'actions' }, h('button', { class: 'btn ghost sm', on: { click: () => go('#/notificacoes') } }, icon('bell', 16), 'Histórico de notificações'), h('button', { class: 'btn ghost sm', id: 'tour-replay-assistente', on: { click: () => tourReplay() } }, icon('spark', 16), 'Rever o tour de boas-vindas')));
   }
 
   /* ---------- Mais (mobile) e categorias ---------- */
