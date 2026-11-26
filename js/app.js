@@ -804,7 +804,7 @@
     const monthCard = h('div', { class: 'stat glass wl-card', id: 'wl-month' }, h('div', { class: 'lbl' }, icon('wallet', 14), 'Este mês'),
       h('div', { class: 'wl-kv' }, h('span', { text: 'Você pagou' }), h('b', { class: 'money', text: money(sm.paidMonth.cents) })),
       h('div', { class: 'wl-kv' }, h('span', { text: 'Você recebeu' }), h('b', { class: 'money', text: money(sm.receivedMonth.cents) })),
-      h('div', { class: 'ctx', text: 'Só pagamentos já confirmados pela outra parte.' }));
+      h('div', { class: 'ctx', text: 'Só pagamentos já confirmados pela outra parte · mês da data do pagamento.' }));
     const pills = [];
     if (sm.overdue) pills.push(pill(`${sm.overdue} em atraso`, 'danger'));
     if (sm.review) pills.push(pill(`${sm.review} em análise`, 'info'));
@@ -939,11 +939,30 @@
       showReports && s.reports.length ? h('div', { class: 'reports' }, s.reports.map((rep) => reportView(a, rep))) : null);
     return row;
   }
+  /* t40u: a data EFETIVA do pagamento (paidAt) e a data de APROVAÇÃO ficam separadas e visíveis; a aprovação não muda o mês em que o valor conta. */
+  function spStamp(iso) { // dia + hora no calendário de São Paulo (não depende do fuso do aparelho)
+    try { const p = {}; new Intl.DateTimeFormat('pt-BR', { timeZone: C.BRT_TZ, hour: '2-digit', minute: '2-digit', hour12: false }).formatToParts(new Date(iso)).forEach((q) => { p[q.type] = q.value; }); return `${date(C.brtDate(iso))} às ${p.hour}:${p.minute} (Brasília)`; } catch (e) { return date(C.brtDate(iso)); }
+  }
+  function approvalLine(a, rep) {
+    if (rep.status !== 'approved') return null;
+    const at = C.approvedAtOf(a, rep); if (!at) return null;
+    return h('div', { class: 'small muted approval-line', 'data-approved-at': at, text: `Pagamento efetivo em ${date(rep.paidAt)} · Aprovado em ${spStamp(at)}${rep.reviewedBy ? ' por ' + (rep.reviewedBy === meId() ? 'você' : person(rep.reviewedBy).name) : ''}` });
+  }
+  /* linha extra no histórico: eventos de confirmação mostram data efetiva × aprovação (buscadas no próprio registro do pagamento) */
+  function historyNote(a, e) {
+    if (!a || !e || !e.data) return null;
+    let rep = null;
+    if (e.type === 'payment.approved') { (a.schedule || []).some((s) => (s.reports || []).some((x) => x.id === e.data.reportId && (rep = x))); }
+    else if (e.type === 'early.settled') { (a.schedule || []).some((s) => (s.reports || []).some((x) => x.earlyId === e.data.earlyId && x.status === 'approved' && (rep = x))); }
+    if (!rep || !rep.paidAt) return null;
+    return h('div', { class: 'small muted hist-dates', text: `Pagamento efetivo em ${date(rep.paidAt)} · Aprovado em ${spStamp(e.at)}` });
+  }
   function reportView(a, rep) {
     const st = { review: ['Em análise', 'info'], approved: ['Aprovado', 'ok'], correction: ['Correção solicitada', 'warn'], refused: ['Recusado', 'danger'] }[rep.status] || [rep.status, ''];
     return h('div', { class: 'report' }, h('div', { class: 'row between wrap' }, h('div', { class: 'row' }, rep.locked ? icon('lock', 14) : icon('clip', 14), h('b', { text: money(rep.amountCents, cur(a)) }), h('span', { class: 'muted', text: 'pago em ' + date(rep.paidAt) })), pill(st[0], st[1])),
       rep.comment ? h('div', { class: 'muted', text: '“' + rep.comment + '”' }) : null,
       rep.reviewReason ? h('div', null, h('b', null, 'Vendedor: '), rep.reviewReason) : null,
+      approvalLine(a, rep),
       h('div', { class: 'row wrap' }, h('button', { class: 'link-btn', on: { click: () => openFile(rep.attachment.fileId) } }, icon('eye', 15), rep.attachment.name), h('span', { class: 'hashline', title: 'SHA-256 do arquivo', text: 'sha256 ' + rep.attachment.sha256.slice(0, 16) + '…' }), rep.locked ? h('span', { class: 'small muted', text: '· imutável' }) : null));
   }
   function installmentsTab(a) {
@@ -988,7 +1007,7 @@
     api.auditLog(S.token, a.id).then(({ events, chain }) => {
       box.replaceChildren(
         h('div', { class: 'note ' + (chain.ok ? 'ok' : 'danger'), style: { marginBottom: '12px' } }, icon(chain.ok ? 'shield' : 'alert', 18), chain.ok ? `Cadeia de eventos íntegra · ${chain.count} eventos verificados por SHA-256.` : `Integridade comprometida no evento #${chain.brokenAt} (${chain.reason}). Os dados locais foram alterados fora do app.`),
-        h('div', { class: 'card glass', style: { padding: '6px 14px' } }, [...events].reverse().map((e) => { const d = EV[e.type]; const who = e.actorId === meId() ? 'Você' : person(e.actorId).name; return h('div', { class: 'inst', style: { gridTemplateColumns: 'auto 1fr' } }, h('span', { class: 'ev-ico ' + ((d && d[1]) || '') }, icon((d && d[0]) || 'doc', 13)), h('div', null, h('div', { class: 'small' }, h('b', { text: who }), ' ', d ? d[2](e.data) : e.type, h('span', { class: 'muted', text: ' · ' + U.dateTime(e.at) })), h('div', { class: 'hashline', text: `#${e.seq} ${e.hash.slice(0, 20)}… ← ${e.prevHash.slice(0, 12)}…` }))); })));
+        h('div', { class: 'card glass', style: { padding: '6px 14px' } }, [...events].reverse().map((e) => { const d = EV[e.type]; const who = e.actorId === meId() ? 'Você' : person(e.actorId).name; return h('div', { class: 'inst', style: { gridTemplateColumns: 'auto 1fr' } }, h('span', { class: 'ev-ico ' + ((d && d[1]) || '') }, icon((d && d[0]) || 'doc', 13)), h('div', null, h('div', { class: 'small' }, h('b', { text: who }), ' ', d ? d[2](e.data) : e.type, h('span', { class: 'muted', text: ' · ' + U.dateTime(e.at) })), historyNote(a, e), h('div', { class: 'hashline', text: `#${e.seq} ${e.hash.slice(0, 20)}… ← ${e.prevHash.slice(0, 12)}…` }))); })));
     }).catch(handleErr);
     return box;
   }
@@ -1686,10 +1705,10 @@
       tiles = [tile('calendar', 'Pagar neste mês', b.dueMonth, 'vencimentos do mês', 'forecast'), tile('check', 'Já paguei', b.paidTotal, 'confirmado pelos vendedores', 'paid'), tile('wallet', 'Falta concluir', b.remaining, 'saldo dos acordos', 'open'), tile('alert', 'Atrasos', b.overdue, `${b.overdue.count} parcela(s)`, 'late')];
     } else if (r === 'recurring') {
       const c = D.recurring;
-      tiles = [tile('repeat', 'Receita recorrente', c.forecastMonthly, 'equivalente por mês', 'forecast'), tile('check', 'Recebido no mês', c.receivedMonth, 'mensalidades confirmadas', 'received'), tile('clock', 'Pendentes', c.pending, `${c.pending.count} cobrança(s)`, 'open'), tile('users', 'Clientes ativos', c.activeClients, 'com contrato vigente', 'count', { count: true, go: () => go('#/clientes') })];
+      tiles = [tile('repeat', 'Receita recorrente', c.forecastMonthly, 'equivalente por mês', 'forecast'), tile('check', 'Recebido no mês', c.receivedMonth, 'mensalidades confirmadas · pela data do pagamento', 'received'), tile('clock', 'Pendentes', c.pending, `${c.pending.count} cobrança(s)`, 'open'), tile('users', 'Clientes ativos', c.activeClients, 'com contrato vigente', 'count', { count: true, go: () => go('#/clientes') })];
     } else {
       const v = D.seller;
-      tiles = [tile('calendar', 'Receber neste mês', v.forecastMonth, 'ainda não recebido', 'forecast'), tile('check', 'Recebido no mês', v.receivedMonth, 'confirmado por você', 'received'), tile('eye', 'Em análise', v.review, 'para você conferir', 'review', { count: true, go: () => { S.filters.pay = 'review'; go('#/pagamentos'); } }), tile('alert', 'Atrasos', v.overdue, `${v.overdue.count} parcela(s)`, 'late'),
+      tiles = [tile('calendar', 'Receber neste mês', v.forecastMonth, 'ainda não recebido', 'forecast'), tile('check', 'Recebido no mês', v.receivedMonth, 'confirmado por você · pela data do pagamento', 'received'), tile('eye', 'Em análise', v.review, 'para você conferir', 'review', { count: true, go: () => { S.filters.pay = 'review'; go('#/pagamentos'); } }), tile('alert', 'Atrasos', v.overdue, `${v.overdue.count} parcela(s)`, 'late'),
         h('button', { class: 'stat glass lift', style: { border: 0, textAlign: 'left' }, on: { click: () => { S.filters.cl = 'attention'; go('#/clientes'); } } }, h('div', { class: 'lbl' }, icon('users', 14), 'Precisam de atenção'), h('div', { class: 'val', text: String(v.attention.length) }), h('div', { class: 'ctx' }, h('span', { class: 'kind-tag count', text: 'Clientes' }), ' atraso ou vencendo'))];
     }
     return h('div', { class: 'stats stats-ind' }, tiles);
@@ -1697,8 +1716,8 @@
   function openDrill(label, box, kind) {
     const items = [...box.items].sort((x, y) => String(x.due || x.paidAt || '').localeCompare(String(y.due || y.paidAt || '')));
     const body = h('div', null,
-      kind === 'forecast' ? h('div', { class: 'note', style: { marginBottom: '12px' } }, icon('calendar', 18), 'Previsão: valores ainda NÃO recebidos/pagos. Nunca somamos previsão com dinheiro confirmado.') : kind === 'received' || kind === 'paid' ? h('div', { class: 'note ok', style: { marginBottom: '12px' } }, icon('check', 18), 'Somente pagamentos com comprovante aprovado pelo vendedor.') : null,
-      h('div', { class: 'card glass', style: { padding: '6px 14px' } }, items.length ? items.map((it) => { const a = findAg(it.agreementId); const o = person(it.counterpartId); return h('button', { class: 'drill-row', on: { click: () => { closeSheet(); go('#/acordo/' + it.agreementId); } } }, avatar(o, 32), h('div', { style: { minWidth: 0, flex: 1, textAlign: 'left' } }, h('div', { class: 'small', style: { fontWeight: 700 }, text: it.title }), h('div', { class: 'small muted', text: `${o.name}${it.due ? ' · vence ' + dateShort(it.due) : ''}${it.periodicity ? ' · ' + PER[it.periodicity].toLowerCase() : ''}` })), h('b', { class: 'money', text: kind === 'count' ? '' : money(it.amountCents, cur(a)) })); }) : h('p', { class: 'muted small', style: { padding: '12px 0' }, text: 'Nada compõe este indicador agora.' })),
+      kind === 'forecast' ? h('div', { class: 'note', style: { marginBottom: '12px' } }, icon('calendar', 18), 'Previsão: valores ainda NÃO recebidos/pagos. Nunca somamos previsão com dinheiro confirmado.') : kind === 'received' || kind === 'paid' ? h('div', { class: 'note ok', style: { marginBottom: '12px' } }, icon('check', 18), 'Somente pagamentos com comprovante aprovado pelo vendedor. O valor conta no mês da data efetiva do pagamento (a data de aprovação é só informativa).') : null,
+      h('div', { class: 'card glass', style: { padding: '6px 14px' } }, items.length ? items.map((it) => { const a = findAg(it.agreementId); const o = person(it.counterpartId); return h('button', { class: 'drill-row', on: { click: () => { closeSheet(); go('#/acordo/' + it.agreementId); } } }, avatar(o, 32), h('div', { style: { minWidth: 0, flex: 1, textAlign: 'left' } }, h('div', { class: 'small', style: { fontWeight: 700 }, text: it.title }), h('div', { class: 'small muted', text: `${o.name}${it.due ? ' · vence ' + dateShort(it.due) : ''}${kind === 'received' && it.paidAt ? ' · pago em ' + dateShort(it.paidAt) : ''}${kind === 'received' && it.approvedAt ? ' · aprovado em ' + dateShort(C.brtDate(it.approvedAt)) : ''}${it.periodicity ? ' · ' + PER[it.periodicity].toLowerCase() : ''}` })), h('b', { class: 'money', text: kind === 'count' ? '' : money(it.amountCents, cur(a)) })); }) : h('p', { class: 'muted small', style: { padding: '12px 0' }, text: 'Nada compõe este indicador agora.' })),
       kind === 'count' ? null : h('div', { class: 'kv', style: { marginTop: '10px' } }, h('span', null, h('span', { class: 'kind-tag ' + kind, text: KIND_TAG[kind] }), ' Total'), h('b', { class: 'money', text: money(box.cents) })));
     sheet('Composição · ' + label, body);
   }
@@ -1826,7 +1845,7 @@
     const hist = h('div', null, U.skeleton(1));
     api.auditLog(S.token, id).then(({ events }) => {
       const evs = events.filter((e) => e.data && (e.data.installmentId === sid || (e.data.installmentIds || []).includes(sid))).reverse();
-      hist.replaceChildren(evs.length ? h('div', { class: 'card glass', style: { padding: '6px 14px' } }, evs.map((e) => { const d = EV[e.type]; const who = e.actorId === meId() ? 'Você' : person(e.actorId).name; return h('div', { class: 'small', style: { padding: '8px 0', borderBottom: '1px solid var(--line)' } }, h('b', { text: who }), ' ', d ? d[2](e.data) : e.type, h('span', { class: 'muted', text: ' · ' + U.dateTime(e.at) }), h('div', { class: 'hashline', text: '#' + e.seq + ' ' + e.hash.slice(0, 16) + '…' })); })) : h('p', { class: 'small muted', text: 'Sem eventos específicos desta parcela.' }));
+      hist.replaceChildren(evs.length ? h('div', { class: 'card glass', style: { padding: '6px 14px' } }, evs.map((e) => { const d = EV[e.type]; const who = e.actorId === meId() ? 'Você' : person(e.actorId).name; return h('div', { class: 'small', style: { padding: '8px 0', borderBottom: '1px solid var(--line)' } }, h('b', { text: who }), ' ', d ? d[2](e.data) : e.type, h('span', { class: 'muted', text: ' · ' + U.dateTime(e.at) }), historyNote(a, e), h('div', { class: 'hashline', text: '#' + e.seq + ' ' + e.hash.slice(0, 16) + '…' })); })) : h('p', { class: 'small muted', text: 'Sem eventos específicos desta parcela.' }));
     }).catch(handleErr);
     const acts = [];
     if (a.status === 'active' && r === 'buyer' && C.OPEN.includes(s.status) && !s.earlyId) acts.push(h('button', { class: 'btn lime sm', on: { click: () => openPay(id, sid) } }, icon('upload', 16), 'Informar pagamento'));

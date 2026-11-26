@@ -45,6 +45,27 @@
     const dt = new Date(Date.UTC(y, m - 1, d));
     return dt.getUTCFullYear() === y && dt.getUTCMonth() === m - 1 && dt.getUTCDate() === d;
   }
+  /* ---------- t40u · referência única de "recebido/pago no mês" = DATA EFETIVA DO PAGAMENTO (paidAt) ----------
+     Painel, resumo de boas-vindas e projeções usam estas funções. A data de aprovação (reviewedAt) fica separada e só é exibida.
+     Só conta pagamento com status 'approved' (em análise, correção solicitada e recusado nunca contam).
+     Mês = mês do calendário de `paidAt` (data de calendário AAAA-MM-DD; não depende do fuso do aparelho).
+     Reserva para registro antigo sem `paidAt` válido: mês de São Paulo da aprovação (não existe no banco de homologação hoje). */
+  const approvedAtOf = (a, r) => (r && (r.reviewedAt || (r.earlyId && (((a && a.early) || []).find((e) => e.id === r.earlyId) || {}).closedAt))) || '';
+  const receiptMonth = (a, r) => (r && isISODate(r.paidAt) ? r.paidAt.slice(0, 7) : brtMonth(approvedAtOf(a, r)));
+  const confirmedIn = (a, s, month) => ((s && s.reports) || []).filter((x) => x.status === 'approved' && receiptMonth(a, x) === month);
+  /** Totais confirmados no mês (data efetiva) por papel. opts.currency filtra a moeda do acordo. */
+  function receivedInMonth(agreements, userId, month, opts) {
+    const out = { seller: { cents: 0, n: 0 }, buyer: { cents: 0, n: 0 } };
+    (agreements || []).filter((a) => isParty(a, userId) && ['active', 'settled', 'consolidated'].includes(a.status)).forEach((a) => {
+      if (opts && opts.currency && (a.currency || 'BRL') !== opts.currency) return;
+      const b = out[roleOf(a, userId)]; if (!b) return;
+      (a.schedule || []).forEach((s) => {
+        if (['replaced', 'consolidated'].includes(s.status) && !s.paidCents) return;
+        confirmedIn(a, s, month).forEach((x) => { b.cents += x.amountCents || 0; b.n++; });
+      });
+    });
+    return out;
+  }
   const pad = (n) => String(n).padStart(2, '0');
   function plusMonths(date, index) {
     const [y, m, d] = date.split('-').map(Number);
@@ -802,18 +823,18 @@
         if (['replaced', 'consolidated'].includes(s.status) && !s.paidCents) return;
         const open = OPEN.includes(s.status) || s.status === 'review';
         const rem = remainingOf(s);
-        // Semântica (documentada em docs/SEMANTICA_DATAS.md): "Recebido no mês" do painel = mês, em São Paulo, da APROVAÇÃO (reviewedAt); a data efetiva do pagamento (paidAt) nunca é alterada.
-        // PRB-04: parcela quitada por antecipação guarda a aprovação na antecipação (closedAt), não no item → usa-a como data
-        const approvedAt = (x) => x.reviewedAt || (x.earlyId && ((a.early || []).find((e) => e.id === x.earlyId) || {}).closedAt) || '';
-        const paidThisMonth = s.reports.filter((x) => x.status === 'approved' && brtMonth(approvedAt(x)) === month).reduce((t, x) => t + x.amountCents, 0);
+        // t40u (docs/SEMANTICA_DATAS.md): "Recebido no mês" = mês da DATA EFETIVA do pagamento (paidAt) de relatórios APROVADOS; a aprovação (reviewedAt) é só informação.
+        const conf = confirmedIn(a, s, month);
+        const paidThisMonth = conf.reduce((t, x) => t + x.amountCents, 0);
+        const rcpt = { paidAt: conf.map((x) => x.paidAt).sort().pop() || null, approvedAt: conf.map((x) => approvedAtOf(a, x)).sort().pop() || null };
         if (r === 'seller') {
           if (open && s.due.slice(0, 7) === month) add(seller.forecastMonth, item(a, s), rem);
-          if (paidThisMonth) add(seller.receivedMonth, item(a, s, { paid: true }), paidThisMonth);
+          if (paidThisMonth) add(seller.receivedMonth, item(a, s, { paid: true, ...rcpt }), paidThisMonth);
           if (OPEN.includes(s.status) && s.due < today) add(seller.overdue, item(a, s), rem);
           if (s.status === 'review') add(seller.review, item(a, s), rem);
           if (rec) {
             if (open) add(recurring.pending, item(a, s), rem);
-            if (paidThisMonth) add(recurring.receivedMonth, item(a, s, { paid: true }), paidThisMonth);
+            if (paidThisMonth) add(recurring.receivedMonth, item(a, s, { paid: true, ...rcpt }), paidThisMonth);
             if (s.paidCents) recurring.history.push(item(a, s, { amountCents: s.paidCents, paidAt: s.paidAt }));
           }
         } else {
@@ -883,7 +904,16 @@
         res.monthly[m] = res.monthly[m] || { paid: 0, open: 0 };
         res.yearly[y] = res.yearly[y] || { paid: 0, open: 0 };
         res.paid += s.paidCents;
-        res.monthly[m].paid += s.paidCents; res.yearly[y].paid += s.paidCents;
+        // t40u: "pago" por mês = mês da DATA EFETIVA do pagamento (paidAt) dos relatórios aprovados; "a pagar" segue o vencimento. A soma continua igual a s.paidCents.
+        let rest = s.paidCents;
+        (s.reports || []).filter((x) => x.status === 'approved').forEach((x) => {
+          const pm = receiptMonth(a, x); if (!pm || rest <= 0) return;
+          const v = Math.min(x.amountCents, rest); rest -= v;
+          const py = pm.slice(0, 4);
+          res.monthly[pm] = res.monthly[pm] || { paid: 0, open: 0 }; res.yearly[py] = res.yearly[py] || { paid: 0, open: 0 };
+          res.monthly[pm].paid += v; res.yearly[py].paid += v;
+        });
+        if (rest > 0) { res.monthly[m].paid += rest; res.yearly[y].paid += rest; } // sem comprovante datado (não ocorre no banco atual): fica no mês do vencimento
         if (OPEN.includes(s.status) || s.status === 'review') {
           const r = remainingOf(s);
           res.pending += r; res.monthly[m].open += r; res.yearly[y].open += r;
@@ -957,7 +987,7 @@
   }
 
   return {
-    PactoError, fail, brtDate, brtMonth, BRT_TZ, isISODate, plusMonths, plusDays, addPeriod, daysBetween, parseMoney, cleanText, isEmail,
+    PactoError, fail, brtDate, brtMonth, BRT_TZ, approvedAtOf, receiptMonth, receivedInMonth, isISODate, plusMonths, plusDays, addPeriod, daysBetween, parseMoney, cleanText, isEmail,
     calcPlan, compareReference, isParty, roleOf, counterpartOf, assertParty, openBalance, totals, installmentStatus, remainingOf, OPEN,
     createAgreement, proposeVersion, respondVersion, pendingVersion, summarizeTerms, normalizeTerms,
     sniffType, validateAttachment, MAX_FILE, ALLOWED_TYPES, MAX_CENTS, reportPayment, reviewPayment,

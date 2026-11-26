@@ -3,9 +3,9 @@
    e clima opcional via Open-Meteo (sem chave, sem geolocalização: só a cidade que a pessoa escolher).
    Clima: cache local de 45 min por cidade; se a chamada falhar, devolve null e a tela mostra "indisponível" — nunca inventa valores. */
 (function (root, factory) {
-  if (typeof module === 'object' && module.exports) module.exports = factory();
-  else root.PactoWelcome = factory();
-})(typeof self !== 'undefined' ? self : this, function () {
+  if (typeof module === 'object' && module.exports) module.exports = factory(require('./core.js'));
+  else root.PactoWelcome = factory(root.PactoCore);
+})(typeof self !== 'undefined' ? self : this, function (C) {
   'use strict';
   function greeting(d) { const h = (d || new Date()).getHours(); return h >= 5 && h < 12 ? 'Bom dia' : h >= 12 && h < 18 ? 'Boa tarde' : 'Boa noite'; }
   function firstName(name) {
@@ -23,17 +23,16 @@
   function summary(ags, me, td) {
     const month = td.slice(0, 7);
     const out = { next: [], paidMonth: { cents: 0, n: 0 }, receivedMonth: { cents: 0, n: 0 }, overdue: 0, review: 0, early: [] };
+    /* t40u: pago/recebido no mês = MESMA função do painel (C.receivedInMonth): data efetiva do pagamento (paidAt), só relatórios aprovados.
+       Só BRL (o card mostra R$). */
+    const rcv = C.receivedInMonth(ags || [], me, month, { currency: 'BRL' });
+    out.paidMonth = rcv.buyer; out.receivedMonth = rcv.seller;
     (ags || []).forEach((a) => {
       const role = a.sellerId === me ? 'seller' : a.buyerId === me ? 'buyer' : null;
       if (!role) return;
       const cur = a.currency || 'BRL';
       (a.schedule || []).forEach((s) => {
         if (GONE.includes(s.status)) return;
-        (s.reports || []).forEach((r) => {
-          if (r.status === 'approved' && String(r.paidAt || '').slice(0, 7) === month && cur === 'BRL') {
-            const bucket = role === 'buyer' ? out.paidMonth : out.receivedMonth; bucket.cents += r.amountCents || 0; bucket.n++;
-          }
-        });
         if (a.status !== 'active') return;
         if (s.status === 'review') out.review++;
         if (OPEN.includes(s.status) && !s.earlyId && rem(s) > 0) {
