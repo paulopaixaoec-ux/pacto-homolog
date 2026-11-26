@@ -742,6 +742,71 @@
   }
 
   /* ---------- Início ---------- */
+  /* ---------- 8.2 · painel de boas-vindas (Início): saudação pela hora, data, clima opcional e resumo ---------- */
+  const PW = window.PactoWelcome;
+  const WX = PW.createWeather({ storage: (() => { try { return localStorage; } catch (e) { return null; } })() });
+  const cityKey = () => 'pacto8:city:' + (meId() || 'anon');
+  function getCity() { try { const c = JSON.parse(localStorage.getItem(cityKey()) || 'null'); return c && Number.isFinite(c.latitude) && Number.isFinite(c.longitude) ? c : null; } catch (e) { return null; } }
+  function setCity(c) { try { if (c) localStorage.setItem(cityKey(), JSON.stringify({ name: c.name, admin1: c.admin1 || '', country: c.country || '', country_code: c.country_code || '', latitude: c.latitude, longitude: c.longitude })); else localStorage.removeItem(cityKey()); } catch (e) { /* armazenamento indisponível */ } }
+  function weatherChip() {
+    const c = getCity(), hr = new Date().getHours(), ic = hr >= 6 && hr < 18 ? 'sun' : 'moon';
+    if (!c) return h('button', { class: 'wx-chip', id: 'wx-chip', type: 'button', 'data-state': 'none', on: { click: openCityPicker } }, icon(ic, 14), h('span', { class: 'wx-txt', text: 'Ver o clima da sua cidade' }));
+    const txt = h('span', { class: 'wx-txt', text: c.name + ' · …' });
+    const btn = h('button', { class: 'wx-chip', id: 'wx-chip', type: 'button', 'data-state': 'loading', 'aria-busy': 'true', 'aria-label': 'Clima em ' + c.name + '. Trocar cidade', on: { click: openCityPicker } }, icon(ic, 14), txt);
+    WX.current(c).then((w) => {
+      const s = w ? `${w.tempC}°C${w.text ? ' · ' + w.text : ''} · ${c.name}` : `${c.name} · clima indisponível`;
+      txt.textContent = s; btn.dataset.state = w ? 'ok' : 'off'; btn.removeAttribute('aria-busy'); btn.setAttribute('aria-label', 'Clima: ' + s + '. Trocar cidade');
+    });
+    return btn;
+  }
+  function openCityPicker() {
+    const status = h('p', { class: 'small muted', 'aria-live': 'polite', style: { margin: '8px 2px' }, text: 'Digite o nome da cidade. Usamos só a cidade que você escolher, nunca a sua localização.' });
+    const list = h('div', { class: 'wx-results', role: 'list', 'aria-label': 'Cidades encontradas' });
+    let tmr = 0, seq = 0;
+    const find = (q) => { clearTimeout(tmr); tmr = setTimeout(async () => {
+      const my = ++seq; if (q.trim().length < 2) { list.replaceChildren(); status.textContent = 'Digite pelo menos 2 letras.'; return; }
+      status.textContent = 'Buscando…'; const r = await WX.search(q); if (my !== seq) return;
+      if (r === null) { list.replaceChildren(); status.textContent = 'Busca de cidades indisponível agora. Tente de novo em instantes.'; return; }
+      status.textContent = r.length ? `${r.length} cidade(s) encontrada(s)` : 'Nenhuma cidade encontrada.';
+      list.replaceChildren(...r.map((c) => h('button', { class: 'wx-opt', type: 'button', role: 'listitem', on: { click: () => { setCity(c); closeSheet(); toast('Clima no Início: ' + PW.cityLabel(c)); render(); } } }, icon('globe', 16), h('span', { text: PW.cityLabel(c) }))));
+    }, 350); };
+    const inp = h('input', { type: 'search', class: 'input', id: 'wx-q', placeholder: 'Ex.: Recife', autocomplete: 'off', 'aria-label': 'Buscar cidade', maxlength: '60', style: { paddingLeft: '42px' }, on: { input: (e) => find(e.target.value) } });
+    const cur = getCity();
+    sheet('Clima no Início', h('div', null,
+      cur ? h('p', { class: 'small', style: { margin: '0 2px 10px' } }, 'Cidade atual: ', h('b', { text: PW.cityLabel(cur) })) : null,
+      h('div', { class: 'input-affix' }, h('span', null, icon('search', 18)), inp), status, list,
+      h('div', { class: 'actions', style: { marginTop: '10px' } }, cur ? h('button', { class: 'btn ghost sm', id: 'wx-off', on: { click: () => { setCity(null); closeSheet(); render(); } } }, icon('x', 16), 'Não mostrar o clima') : null),
+      h('p', { class: 'small muted', style: { margin: '10px 2px 0' }, text: 'Dados do tempo: Open-Meteo (atualiza a cada 45 min). A cidade fica salva só neste aparelho.' })));
+  }
+  function welcomePanel(segEl) {
+    const now = new Date(), td = today();
+    const sm = PW.summary(S.ags, meId(), td);
+    const respond = pendingActions().filter((x) => !['overdue', 'review'].includes(x.kind)).length;
+    const toConfirm = pendingActions().filter((x) => x.kind === 'review').length;
+    const nextCard = h('div', { class: 'stat glass wl-card', id: 'wl-next' }, h('div', { class: 'lbl' }, icon('calendar', 14), 'Próximos vencimentos'),
+      sm.next.length ? h('div', { class: 'wl-list' }, sm.next.map((x) => h('button', { class: 'wl-row', type: 'button', on: { click: () => go('#/acordo/' + x.agId) } },
+        h('span', { class: 'wl-d', text: dateShort(x.due) }), h('span', { class: 'wl-t', text: x.title }), h('span', { class: 'wl-v money', text: (x.role === 'buyer' ? '' : '+') + money(x.cents, x.currency) }))))
+        : h('div', { class: 'ctx', style: { marginTop: '6px' }, text: 'Nada vencendo por agora.' }));
+    const monthCard = h('div', { class: 'stat glass wl-card', id: 'wl-month' }, h('div', { class: 'lbl' }, icon('wallet', 14), 'Este mês'),
+      h('div', { class: 'wl-kv' }, h('span', { text: 'Você pagou' }), h('b', { class: 'money', text: money(sm.paidMonth.cents) })),
+      h('div', { class: 'wl-kv' }, h('span', { text: 'Você recebeu' }), h('b', { class: 'money', text: money(sm.receivedMonth.cents) })),
+      h('div', { class: 'ctx', text: 'Só pagamentos já confirmados pela outra parte.' }));
+    const pills = [];
+    if (sm.overdue) pills.push(pill(`${sm.overdue} em atraso`, 'danger'));
+    if (sm.review) pills.push(pill(`${sm.review} em análise`, 'info'));
+    if (toConfirm) pills.push(pill(`${toConfirm} para você conferir`, 'warn'));
+    if (respond) pills.push(pill(`${respond} aguardando sua resposta`, ''));
+    const early = sm.early[0];
+    const attCard = h('div', { class: 'stat glass wl-card', id: 'wl-att' }, h('div', { class: 'lbl' }, icon('alert', 14), 'Precisa de atenção'),
+      h('div', { class: 'wl-pills' }, pills.length ? pills : pill('Tudo em dia', 'ok')),
+      early ? h('button', { class: 'link-btn wl-early', id: 'wl-early', on: { click: () => openEarly(early.agId, early.earlyId) } }, icon('zap', 14), `Antecipação com ${money(early.discountCents, early.currency)} de desconto · ${early.title}`) : null);
+    return h('section', { class: 'welcome', id: 'welcome', 'aria-label': 'Boas-vindas e resumo' },
+      h('div', { class: 'hello' }, h('div', null,
+        h('div', { class: 'wl-top' }, h('span', { class: 'eyebrow', id: 'wl-date', text: PW.dateLabel(now, U.lang) }), weatherChip()),
+        h('div', { id: 'wl-greet', style: { fontSize: '20px', fontWeight: 760, letterSpacing: '-.03em' } }, `${PW.greeting(now)}, ${PW.firstName(S.me.name)} 👋`)), segEl),
+      h('div', { class: 'wl-sum' }, nextCard, monthCard, attCard));
+  }
+
   function homePage() {
     const r = S.homeRole, me = S.me, td = today();
     const mine = S.ags.filter((a) => (r === 'recurring' ? role(a) === 'seller' && isRec(a) : role(a) === r) && a.status !== 'consolidated');
@@ -772,8 +837,7 @@
     const stats = indicators(r);
     const feedAll = S.feed.map(post).filter(Boolean); const feedN = S.feedN || 6; const feedEls = feedAll.slice(0, feedN);
     const seller = S.ags.filter((a) => a.sellerId === meId()).length, buyer = S.ags.filter((a) => a.buyerId === meId()).length;
-    const hello = h('div', { class: 'hello' }, h('div', null, h('div', { class: 'eyebrow', text: new Date().toLocaleDateString(U.lang, { weekday: 'long', day: 'numeric', month: 'long' }) }), h('div', { style: { fontSize: '20px', fontWeight: 760, letterSpacing: '-.03em' } }, `Olá, ${me.name.split(' ')[0]} 👋`)),
-      seg([['buyer', `${t('buying')} · ${buyer}`], ['seller', `${t('selling')} · ${seller}`], ...(S.dash && S.dash.hasRecurring ? [['recurring', t('recurring')]] : [])], r, (v) => { S.homeRole = v; sessionStorage.setItem('pacto8:homeRole', v); render(); }, 'Ver como'));
+    const hello = welcomePanel(seg([['buyer', `${t('buying')} · ${buyer}`], ['seller', `${t('selling')} · ${seller}`], ...(S.dash && S.dash.hasRecurring ? [['recurring', t('recurring')]] : [])], r, (v) => { S.homeRole = v; sessionStorage.setItem('pacto8:homeRole', v); render(); }, 'Ver como'));
     const left = h('div', null, verifyBanner(), mfaBanner(), hello, h('div', { class: 'section-h', style: { marginTop: '4px' } }, h('h2', null, t('pending')), h('span', { class: 'small muted', text: acts.length ? `${acts.length} ação(ões)` : '' })), stories, hero, stats,
       h('div', { class: 'section-h' }, h('h2', null, r === 'buyer' ? 'Meus acordos' : r === 'recurring' ? 'Contratos recorrentes' : 'Acordos que vendi'), h('button', { class: 'link-btn', on: { click: () => { S.filters.ag = r; go('#/acordos'); } } }, t('seeAll'), icon('right', 16))),
       mine.length ? h('div', { class: 'hscroll' }, mine.slice(0, 8).map((a) => agCard(a))) : empty('doc', 'Nenhum acordo aqui', r === 'seller' ? 'Cadastre uma venda, serviço ou empréstimo e envie para aceite.' : 'Você ainda não comprou nada pelo PACTO.', r === 'seller' ? h('button', { class: 'btn', on: { click: () => newAgreement() } }, icon('plus', 18), t('newAgreement')) : null));
