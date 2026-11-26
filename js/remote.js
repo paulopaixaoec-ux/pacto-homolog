@@ -65,11 +65,12 @@
       if (/Email not confirmed/i.test(m)) return new PactoError('UNVERIFIED', 'Confirme seu e-mail pelo link que enviamos antes de entrar.');
       if (/already registered|already been registered/i.test(m)) return new PactoError('CONFLICT', 'Já existe uma conta com este e-mail.');
       if (/captcha/i.test(m)) return new PactoError('CAPTCHA', 'Confirme a verificação anti-robô e tente de novo.');
+      if (/over_email_send_rate_limit|email rate limit exceeded/i.test(String((e && (e.code || e.error_code)) || '') + ' ' + m)) return new PactoError('RATE_LIMIT', 'Não foi possível enviar o e-mail agora. Aguarde uns minutos e tente de novo.');
       if (/rate limit|too many|only request this after|over_.*_limit/i.test(m) || (e && e.status === 429)) { const sec = /after (\d+) second/i.exec(m); return new PactoError('RATE_LIMIT', sec ? `Muitos pedidos em sequência. Aguarde ${sec[1]} segundos e tente de novo.` : 'Muitas tentativas. Aguarde alguns minutos e tente de novo.'); }
       if (/different from the old password|same_password/i.test(m) || (e && e.code === 'same_password')) return new PactoError('SAME_PASSWORD', 'A nova senha precisa ser diferente da senha atual.');
       if (/AAL2|aal2|insufficient_aal/i.test(m) || (e && e.code === 'insufficient_aal')) return new PactoError('MFA_REQUIRED', 'Confirme com o código do app autenticador para continuar.');
       if (/expired|invalid/i.test(m) && /token|otp|link/i.test(m)) return new PactoError('LINK_INVALID', 'Este link expirou, já foi usado ou não é válido.');
-      if (/Password should|weak/i.test(m)) return new PactoError('WEAK_PASSWORD', 'Senha fraca: use ao menos 10 caracteres com letras e números.');
+      if (/Password should|weak/i.test(m) || (e && (e.code === 'weak_password' || e.error_code === 'weak_password'))) return new PactoError('WEAK_PASSWORD', 'Senha fraca: use ao menos 10 caracteres com letras e números.');
       return new PactoError('AUTH', m || 'Não foi possível concluir. Tente de novo.');
     };
 

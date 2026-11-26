@@ -1419,7 +1419,7 @@
     const me = S.me;
     const name = h('input', { value: me.name, maxlength: '60' });
     const photoIn = h('input', { type: 'file', id: 'photo', accept: 'image/png,image/jpeg,image/webp', on: { change: async (e) => { try { const url = await resizePhoto(e.target.files[0]); await call(() => api.updateProfile(S.token, { photo: url }), 'Foto atualizada.'); } catch (x) { toast(x.message, 'err'); } } } });
-    const pcur = h('input', { type: 'password', autocomplete: 'current-password' }), pnew = h('input', { type: 'password', autocomplete: 'new-password' });
+    const pcur = h('input', { id: 'pf-pw-cur', type: 'password', autocomplete: 'current-password' }), pnew = h('input', { id: 'pf-pw-new', type: 'password', autocomplete: 'new-password' });
     const capPw = captchaBox();
     const sessBox = h('div', null, U.skeleton(1));
     /* 8.2 · “Esqueci minha senha” (Supabase Auth): link por e-mail para o endereço cadastrado, sem pedir a senha atual */
@@ -1460,7 +1460,7 @@
       REMOTE ? mfaCard() : null,
       h('section', { class: 'card glass' }, h('h2', { style: { margin: '0 0 12px', fontSize: '16px' } }, t('security')),
         h('div', { class: 'field' }, h('label', null, 'Bloquear após inatividade'), seg([[5, '5 min'], [10, '10 min'], [15, '15 min'], [30, '30 min']], prefs.autoLockMin, (v) => setPref('autoLockMin', v), 'Bloqueio automático')),
-        h('div', { class: 'form-grid' }, field('Senha atual', pcur), field('Nova senha', pnew, 'Mín. 10 caracteres com letras e números.')),
+        h('div', { class: 'form-grid' }, field('Senha atual', pcur), field('Nova senha', pnew, 'Mínimo de 10 caracteres, com letras e números.')),
         capPw.el,
         h('div', { class: 'actions' }, h('button', { class: 'btn sm ghost', on: { click: async () => { let t; try { t = await capPw.need(); } catch (e) { toast(e.message, 'err'); return; } await call(() => api.changePassword(S.token, { current: pcur.value, next: pnew.value, captchaToken: t }), 'Senha alterada. Outras sessões foram encerradas.'); capPw.reset(); } } }, icon('key', 16), 'Alterar senha'), REMOTE ? forgotBtn : null),
         REMOTE ? h('p', { class: 'small muted', style: { margin: '8px 0 0' }, text: 'Perdeu a senha atual? Use “Esqueci minha senha”: enviamos um link para o e-mail cadastrado. Se você usa verificação em duas etapas, o código do app autenticador continua sendo exigido.' }) : null, REMOTE ? forgotBox : null,
