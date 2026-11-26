@@ -1868,8 +1868,9 @@
       if (AL.kind === 'confirm') { S.rec = { stage: 'confirm', tokenHash: AL.tokenHash }; render(); return; }
       if (AL.kind === 'error') { S.rec = { stage: 'error', reason: AL.reason }; render(); return; }
       const pf = sessionStorage.getItem('pacto8:prefill'); if (pf) { S.authEmail = pf; S.authNotice = sessionStorage.getItem('pacto8:notice') || null; sessionStorage.removeItem('pacto8:prefill'); sessionStorage.removeItem('pacto8:notice'); }
-      if (/^#(access_token|type|error)=/.test(BOOT_URL.hash) || /[?&](acao|code|token_hash)=/.test(BOOT_URL.search)) history.replaceState(null, '', location.pathname + '#/inicio');
+      // o supabase-js só lê o #access_token (link de confirmação do cadastro) quando o getSession() inicializa: restaurar ANTES de limpar a URL, senão o login automático por e-mail se perde
       const r = await api.restore();
+      if (/^#(access_token|type|error)=/.test(BOOT_URL.hash) || /[?&](acao|code|token_hash)=/.test(BOOT_URL.search)) history.replaceState(null, '', location.pathname + '#/inicio');
       if (r && !S.rec) { setToken(r.token); try { await api.claim(S.token); } catch {} await refresh(); }
       else { S.token = null; sessionStorage.removeItem('pacto8:token'); render(); }
       setInterval(() => { if (S.token && !S.locked) api.runReminders(S.token).then((n) => { if (n) refresh(); }).catch(() => {}); }, 15 * 60000);
