@@ -381,6 +381,12 @@
      e ainda não concluiu nem pulou o tour. A conclusão fica no Supabase (user_onboarding, só a própria linha) e vale em todos os aparelhos.
      Não bloqueia o app: o fundo não captura cliques; Pular/Esc fecham a qualquer momento. Respeita prefers-reduced-motion. */
   const TOUR = { uid: null, status: null, active: false, step: 0, replay: false, el: null, prevFocus: null, raf: 0, mo: null };
+  /* teclado do tour no documento todo (o tour não prende o foco): Esc pula, setas navegam; não interfere em campos nem em janelas abertas */
+  document.addEventListener('keydown', (e) => {
+    const el = TOUR.el; if (!el || el.hidden || e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey) return;
+    if (document.body.classList.contains('has-sheet') || /INPUT|TEXTAREA|SELECT/.test((e.target && e.target.tagName) || '') || (e.target && e.target.isContentEditable)) return;
+    if (e.key === 'Escape') { e.preventDefault(); tourFinish('skipped'); } else if (e.key === 'ArrowRight') { e.preventDefault(); tourGo(1); } else if (e.key === 'ArrowLeft') { e.preventDefault(); tourGo(-1); }
+  });
   const tourKey = (uid) => 'pacto8:tour:' + uid;
   const tourFirst = () => { const n = String((S.me && S.me.name) || '').replace(/^\s*(\[[^\]]*\]\s*)+/, '').trim(); return n.split(/\s+/)[0] || 'você'; };
   function tourSteps() {
@@ -420,7 +426,7 @@
     if (TOUR.active) tourClose();
     TOUR.active = true; TOUR.replay = !!replay; TOUR.step = 0; TOUR.prevFocus = document.activeElement;
     const el = h('div', { id: 'tour', class: 'tour', role: 'dialog', 'aria-modal': 'false', 'aria-labelledby': 'tour-title', 'aria-describedby': 'tour-text',
-      on: { keydown: (e) => { if (e.key === 'Escape') { e.preventDefault(); tourFinish('skipped'); } else if (e.key === 'ArrowRight' && !/INPUT|TEXTAREA/.test(e.target.tagName)) tourGo(1); else if (e.key === 'ArrowLeft') tourGo(-1); } } });
+    });
     TOUR.el = el; document.body.appendChild(el);
     TOUR.onWin = () => tourPlace(); addEventListener('resize', TOUR.onWin); addEventListener('scroll', TOUR.onWin, { passive: true });
     TOUR.mo = new MutationObserver(() => tourPlace()); TOUR.mo.observe($root(), { childList: true, subtree: true });
@@ -435,9 +441,10 @@
     const f = TOUR.prevFocus; TOUR.prevFocus = null; if (f && f.isConnected && f.focus) try { f.focus(); } catch {}
   }
   async function tourFinish(status, then) {
-    const uid = TOUR.uid; tourClose(); TOUR.status = 'done';
+    const uid = TOUR.uid, wasDone = TOUR.status === 'done'; tourClose(); TOUR.status = 'done';
     if (uid) localStorage.setItem(tourKey(uid), '1');
-    if (REMOTE && S.token) api.tourMark(status).catch(() => {}); // grava no servidor (vale nos outros aparelhos); falha não atrapalha o uso
+    /* rever e pular não rebaixa um tour já concluído: só grava se ainda não havia registro ou se agora concluiu */
+    if (REMOTE && S.token && !(TOUR.replay && wasDone && status === 'skipped')) api.tourMark(status).catch(() => {}); // grava no servidor (vale nos outros aparelhos); falha não atrapalha o uso
     if (status === 'skipped' && !TOUR.replay) toast('Tudo bem! Você pode rever o tour em Perfil ou no Assistente.');
     if (then) then();
   }
