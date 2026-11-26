@@ -6,7 +6,7 @@
   --petrol-950: #06201d; --petrol-900: #0b2f2a; --petrol-800: #0f3d37; --petrol-700: #145249; --petrol-600: #1b6b5f; --petrol-500: #238476; --petrol-300: #7fb8ac;
   --lime: #c8f169; --lime-strong: #b4e64a; --lime-ink: #1d3a10;
   --offwhite: #f5f4ee; --paper: #fbfaf6;
-  --ink: #0c2a26; --ink-2: #33514c; --muted: #5a716c;
+  --ink: #0c2a26; --ink-2: #1e3f3a; --muted: #2f4b46;
   --ok: #1f7a4f; --ok-bg: #dff3e6; --warn: #8a5a00; --warn-bg: #fbefd3; --danger: #a3332c; --danger-bg: #fbe3df; --info: #1d5fa8; --info-bg: #e2edf9;
   --glass: rgba(255, 255, 255, .58); --glass-2: rgba(255, 255, 255, .74); --glass-edge: rgba(255, 255, 255, .78); --glass-edge-2: rgba(255, 255, 255, .2);
   --glass-shadow: 0 1px 0 rgba(255,255,255,.9) inset, 0 -1px 0 rgba(255,255,255,.25) inset, 0 18px 40px -18px rgba(8, 46, 40, .28), 0 2px 6px -2px rgba(8, 46, 40, .1);
@@ -709,4 +709,110 @@ select { height: 40px; padding: 0 10px; border-radius: 12px; border: 1px solid v
   .wl-sum { grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: minmax(230px, 80%); overflow-x: auto; scroll-snap-type: x mandatory; padding: 2px 4px 6px; margin: 0 -4px; scrollbar-width: none; }
   .wl-sum::-webkit-scrollbar { display: none; }
   .wl-sum > * { scroll-snap-align: start; }
+}
+
+/* 8.2 · Liquid Glass só nas telas de autenticação (login, cadastro, recuperação, MFA e bloqueio).
+   Recupera as transparências e o vidro do design system (:root), com fundo petróleo e luz lima.
+   Não altera Início, painéis, tour nem qualquer outra tela. Sem animações de brilho. */
+.auth {
+  position: relative;
+  background:
+    radial-gradient(90vmax 60vmax at 8% -8%, rgba(200, 241, 105, .30), transparent 58%),
+    radial-gradient(70vmax 50vmax at 108% 12%, rgba(197, 255, 77, .14), transparent 55%),
+    radial-gradient(80vmax 56vmax at 70% 118%, rgba(19, 107, 85, .45), transparent 55%),
+    linear-gradient(165deg, #1B6B5F 0%, #0B4D3E 48%, #0A3F34 100%);
+}
+.auth,
+.auth .auth-card,
+.lockscreen .lock-card {
+  --ink: #0c2a26; --ink-2: #1e3f3a; --muted: #2f4b46;
+  --paper: #f7faf7; --offwhite: #f5f4ee;
+  --ok: #1f7a4f; --ok-bg: #dff3e6; --warn: #8a5a00; --warn-bg: #fbefd3;
+  --danger: #a3332c; --danger-bg: #fbe3df; --info: #1d5fa8; --info-bg: #e2edf9;
+  --line: rgba(12, 42, 38, .10); --line-2: rgba(12, 42, 38, .16);
+  --glass: rgba(255, 255, 255, .52); --glass-2: rgba(255, 255, 255, .78);
+  --glass-edge: rgba(255, 255, 255, .88); --glass-edge-2: rgba(255, 255, 255, .22);
+  --glass-shadow: 0 1px 0 rgba(255,255,255,.92) inset, 0 -1px 0 rgba(255,255,255,.22) inset, 0 28px 64px -24px rgba(4, 22, 20, .48), 0 2px 10px rgba(4, 22, 20, .12);
+  --blur: 28px; --sat: 180%;
+  color: var(--ink);
+  color-scheme: light;
+}
+.auth .auth-card.glass-strong,
+[data-theme='dark'] .auth .auth-card.glass-strong,
+.lockscreen .lock-card.glass-strong,
+[data-theme='dark'] .lockscreen .lock-card.glass-strong {
+  --glass: rgba(255, 255, 255, .52); --glass-2: rgba(255, 255, 255, .82);
+  background: linear-gradient(145deg, rgba(255,255,255,.92), rgba(255,255,255,.78) 55%);
+  -webkit-backdrop-filter: blur(28px) saturate(180%);
+  backdrop-filter: blur(28px) saturate(180%);
+  box-shadow: var(--glass-shadow);
+}
+.auth-brand {
+  /* vidro petróleo (opacidade alta o bastante para o texto branco passar no WCAG AA; luz lima só no topo) */
+  background:
+    radial-gradient(120% 90% at 0% 0%, rgba(200, 241, 105, .22), transparent 50%),
+    radial-gradient(90% 80% at 100% 100%, rgba(197, 255, 77, .07), transparent 50%),
+    linear-gradient(155deg, rgba(21, 96, 86, .94), rgba(11, 77, 62, .93));
+  color: #f4fbf8;
+}
+.auth-brand h1 { color: #f7fdf9; text-shadow: 0 1px 0 rgba(0, 30, 24, .18); }
+.auth-brand p { color: #f3fbf7; }
+.auth-brand .logo { color: #fff; filter: drop-shadow(0 6px 16px rgba(0, 20, 16, .22)); }
+.auth-brand .logo-tag { color: #e4f3eb; }
+.auth-feat { color: #ffffff; }
+.rule { background: rgba(255, 255, 255, .12); box-shadow: inset 0 1px 0 rgba(255,255,255,.28), inset 0 0 0 1px rgba(255,255,255,.16); color: #eef8f2; }
+.rule b { color: #E8FF9A; }
+.auth-panel { color: var(--ink); }
+.auth-panel h2 { color: var(--ink); }
+.auth .link-btn,
+[data-theme='dark'] .auth .link-btn,
+.lockscreen .link-btn,
+[data-theme='dark'] .lockscreen .link-btn { color: #0A3F34; }
+.auth .link-btn:focus-visible,
+.lockscreen .link-btn:focus-visible,
+.auth :focus-visible,
+.lockscreen :focus-visible { outline: 3px solid var(--lime-strong); outline-offset: 2px; }
+.auth-panel .input,
+.auth-panel .field input:not([type=checkbox]):not([type=range]):not([type=file]),
+.auth-panel .field select,
+.auth-panel .field textarea,
+.lock-card .input,
+.lock-card input:not([type=checkbox]):not([type=range]):not([type=file]) {
+  background: rgba(255, 255, 255, .86);
+  border-color: rgba(12, 42, 38, .16);
+  color: var(--ink);
+}
+.lockscreen {
+  background:
+    radial-gradient(80% 60% at 90% 0%, rgba(197, 255, 77, .14), transparent 56%),
+    rgba(7, 43, 38, .36);
+  -webkit-backdrop-filter: blur(28px) saturate(160%);
+  backdrop-filter: blur(28px) saturate(160%);
+}
+@media (prefers-reduced-motion: reduce) {
+  .auth, .auth-brand, .auth-card, .lockscreen, .lock-card { animation: none !important; transition: none !important; }
+}
+@media (prefers-reduced-transparency: reduce) {
+  .auth .auth-card.glass-strong,
+  [data-theme='dark'] .auth .auth-card.glass-strong,
+  .lockscreen .lock-card.glass-strong,
+  [data-theme='dark'] .lockscreen .lock-card.glass-strong {
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+    background: #F3F7F4;
+  }
+  .auth-brand {
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+    background: #0B4D3E;
+  }
+  .lockscreen {
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+    background: #1A3F38;
+  }
+}
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .auth .auth-card.glass-strong, .lockscreen .lock-card.glass-strong { background: #F3F7F4; }
+  .auth-brand { background: #0B4D3E; }
 }
