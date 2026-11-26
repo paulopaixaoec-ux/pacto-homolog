@@ -32,6 +32,20 @@
     });
   }
 
+  /** Só desloga quando o servidor recusa o refresh de forma definitiva (token revogado/inexistente). Falha de rede ou 5xx não apaga um refresh token ainda válido. */
+  function refreshIsFatal(err) {
+    if (!err || err === true) return false;
+    const code = String(err.code || err.error || err.name || '');
+    const msg = String(err.message || err.error_description || err.error_code || '');
+    const blob = code + ' ' + msg;
+    // códigos definitivos primeiro — status 0 (erro sem HTTP) não pode mascarar invalid_grant
+    if (/invalid_grant|refresh.?token.?not.?found|refresh.?token.?already.?used|session.?not.?found/i.test(blob)) return true;
+    const status = Number(err.status || err.statusCode || 0);
+    if (status === 0 || status >= 500) return false;
+    if (/AuthRetryableFetchError|fetch|network|timeout|Failed to fetch|ECONN|ETIMEDOUT/i.test(blob)) return false;
+    return false;
+  }
+
   function createRemoteAPI({ supabase: sb, functionsUrl, anonKey, clock = { now: () => new Date() }, redirectTo, functionsRegion }) {
     const now = () => clock.now();
     // o link de recuperação volta para a mesma página (dentro da lista de URLs permitidas do Supabase) com um marcador de ação
@@ -62,6 +76,7 @@
     const cap = (t) => (t ? { captchaToken: String(t) } : {}); // CAPTCHA (Turnstile/hCaptcha) só quando a tela tiver um token
 
     async function startLocal(session) {
+      rememberAuth(session);
       LT = C.randomToken(32); LKEY = await C.sha256Hex('session:' + LT);
       lastSeen = Date.now(); locked = false; expiresAt = Date.now() + 8 * 3600 * 1000;
       dirty = true; snap = null;
@@ -85,10 +100,46 @@
       if (typeof window !== 'undefined') window.addEventListener('focus', emit);
     }
 
+    // último par access+refresh que vimos: se getSession() devolver null após uma falha transitória
+    // (rede, aba em segundo plano), ainda tentamos renovar com este refresh token em vez de deslogar.
+    let lastHeld = null;
+    function rememberAuth(s) { if (s && s.refresh_token) lastHeld = s; }
+    function heldRefresh() {
+      if (lastHeld && lastHeld.refresh_token) return lastHeld;
+      if (typeof localStorage === 'undefined') return null;
+      try {
+        const k = Object.keys(localStorage).find((x) => x === 'pacto82-auth' || x.endsWith('-auth-token'));
+        if (!k) return null;
+        const raw = JSON.parse(localStorage.getItem(k));
+        const sess = raw && (raw.currentSession || raw);
+        return (sess && sess.refresh_token) ? sess : null;
+      } catch { return null; }
+    }
+    async function recoverSession(minLeftSec = 0) {
+      let s = null, getErr = null;
+      try {
+        const { data, error } = await sb.auth.getSession();
+        s = data && data.session; getErr = error || null;
+        if (s) rememberAuth(s);
+      } catch (e) { getErr = e; }
+      if (s && s.expires_at && s.expires_at - Math.floor(Date.now() / 1000) > minLeftSec) return s;
+      const hint = s || heldRefresh();
+      let r;
+      try {
+        r = hint && hint.refresh_token
+          ? await sb.auth.refreshSession({ refresh_token: hint.refresh_token })
+          : await sb.auth.refreshSession();
+      } catch (e) { r = { data: { session: null }, error: e }; }
+      if (r && r.data && r.data.session) { rememberAuth(r.data.session); return r.data.session; }
+      const err = (r && r.error) || getErr;
+      if (refreshIsFatal(err)) { lastHeld = null; stopLocal(); return null; }
+      // transiente: devolve a sessão que ainda temos (mesmo com access token vencido) e NÃO desmonta
+      return s || hint || null;
+    }
     async function requireSession() {
-      const { data } = await sb.auth.getSession();
-      if (!data || !data.session) { stopLocal(); throw new PactoError('UNAUTHENTICATED', 'Sua sessão terminou. Entre novamente.'); }
-      return data.session;
+      const s = await recoverSession(0);
+      if (s) return s;
+      throw new PactoError('UNAUTHENTICATED', 'Sua sessão terminou. Entre novamente.');
     }
     function q(res, what) { if (res.error) throw new PactoError('NETWORK', 'Falha ao ler ' + what + ': ' + res.error.message); return res.data; }
 
@@ -127,11 +178,7 @@
 
     // sessão: renova o token se faltar pouco para vencer (JWT curto, ex.: 600 s) — usado antes de chamar a função e ao voltar ao app
     async function freshSession(minLeftSec = 60) {
-      const { data } = await sb.auth.getSession();
-      const s0 = data && data.session; if (!s0) return null;
-      if (s0.expires_at && s0.expires_at - Math.floor(Date.now() / 1000) > minLeftSec) return s0;
-      const r = await sb.auth.refreshSession();
-      return (r.data && r.data.session) || null;
+      return recoverSession(minLeftSec);
     }
     async function invoke(method, args) {
       try { return await invokeOnce(method, args); }
@@ -139,9 +186,12 @@
         let e = e0;
         // token vencido ou recusado: renova a sessão e repete UMA vez; se não renovar, pede login de novo
         if (e && (e.code === 'TOKEN_EXPIRED' || e.code === 'UNAUTHENTICATED') && e.httpStatus === 401) {
-          const r = await sb.auth.refreshSession().catch(() => ({ error: true }));
-          if (r.error || !r.data || !r.data.session) { stopLocal(); throw new PactoError('UNAUTHENTICATED', 'Sua sessão terminou. Entre novamente.'); }
-          try { return await invokeOnce(method, args); } catch (e2) { e = e2; }
+          const s1 = await recoverSession(0);
+          if (s1 && s1.access_token) {
+            try { return await invokeOnce(method, args); } catch (e2) { e = e2; }
+          } else {
+            throw new PactoError('UNAUTHENTICATED', 'Sua sessão terminou. Entre novamente.');
+          }
         }
         if (e && e.code === 'MFA_REQUIRED' && stepUpHandler) {
           const ok = await stepUpHandler(); // reautenticação forte (hoje TOTP; passkey depois) e repete UMA vez
@@ -303,7 +353,7 @@
         return r;
       },
       /** Chamado ao voltar ao app (aba visível, foco, rede de volta): renova a sessão se estiver perto de vencer. */
-      async resumeSession() { if (!LT) return false; try { const s1 = await freshSession(120); if (!s1) { stopLocal(); return false; } emit(); return true; } catch { return false; } },
+      async resumeSession() { if (!LT) return false; try { const s1 = await recoverSession(120); if (!s1) return false; emit(); return true; } catch { return false; } },
       async mfaUnenroll(factorId) {
         const { error } = await sb.auth.mfa.unenroll({ factorId }); if (error) throw (/aal2|AAL2/.test(error.message) ? new PactoError('MFA_REQUIRED', 'Confirme com o código atual antes de desativar.') : authErr(error));
         await sb.auth.refreshSession().catch(() => {});
@@ -348,5 +398,5 @@
     });
     return api;
   }
-  return { createRemoteAPI, buildState, encodeArgs, WRITE, READ };
+  return { createRemoteAPI, buildState, encodeArgs, WRITE, READ, refreshIsFatal };
 });
