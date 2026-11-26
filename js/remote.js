@@ -81,14 +81,19 @@
       LT = C.randomToken(32); LKEY = await C.sha256Hex('session:' + LT);
       lastSeen = Date.now(); locked = false; expiresAt = Date.now() + 8 * 3600 * 1000;
       dirty = true; snap = null;
-      startSync(session.user.id);
+      startSync(session.user.id, session.access_token);
       return LT;
     }
     function stopLocal() { LT = null; LKEY = null; snap = null; dirty = true; if (channel) { try { sb.removeChannel(channel); } catch {} channel = null; } clearInterval(pollT); rtStatus = 'off'; }
 
-    function startSync(uid) {
+    /** Realtime privado: o token do canal precisa acompanhar a sessão (JWT de 600 s). */
+    function rtAuth(token) { try { if (token && sb.realtime && typeof sb.realtime.setAuth === 'function') { const r = sb.realtime.setAuth(token); if (r && r.catch) r.catch(() => {}); } } catch {} }
+    function startSync(uid, token) {
       if (channel) { try { sb.removeChannel(channel); } catch {} }
-      channel = sb.channel('pacto-' + uid)
+      rtAuth(token);
+      // canal PRIVADO 'pacto-<uid>': com “Allow public access” desligado, o Realtime só aceita canais privados;
+      // a política em realtime.messages só deixa cada pessoa entrar no próprio tópico. Os eventos de tabela seguem o RLS.
+      channel = sb.channel('pacto-' + uid, { config: { private: true } })
         .on('postgres_changes', { event: '*', schema: 'public', table: 'agreements' }, emit)
         .on('postgres_changes', { event: '*', schema: 'public', table: 'consolidations' }, emit)
         .on('postgres_changes', { event: '*', schema: 'public', table: 'notifications', filter: 'user_id=eq.' + uid }, emit)
@@ -131,7 +136,7 @@
           ? await sb.auth.refreshSession({ refresh_token: hint.refresh_token })
           : await sb.auth.refreshSession();
       } catch (e) { r = { data: { session: null }, error: e }; }
-      if (r && r.data && r.data.session) { rememberAuth(r.data.session); return r.data.session; }
+      if (r && r.data && r.data.session) { rememberAuth(r.data.session); rtAuth(r.data.session.access_token); return r.data.session; }
       const err = (r && r.error) || getErr;
       if (refreshIsFatal(err)) { lastHeld = null; stopLocal(); return null; }
       // transiente: devolve a sessão que ainda temos (mesmo com access token vencido) e NÃO desmonta
@@ -395,6 +400,7 @@
     }
     sb.auth.onAuthStateChange((event, session) => {
       if (event === 'SIGNED_OUT') stopLocal();
+      else if (session && session.access_token && (event === 'TOKEN_REFRESHED' || event === 'SIGNED_IN')) rtAuth(session.access_token);
       authListeners.forEach((fn) => { try { fn(event, session); } catch {} });
     });
     return api;

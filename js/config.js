@@ -1,4 +1,4 @@
-/* PACTO · configuração pública do cliente (gerada por tools/configure.mjs em 2026-11-26T01:31:49.156Z).
+/* PACTO · configuração pública do cliente (gerada por tools/configure.mjs em 2026-11-26T02:51:18.640Z).
    Só entram valores PÚBLICOS: URL do projeto e chave anon/publishable (protegida por RLS). A service_role NUNCA vai para o navegador. */
 window.PACTO_CONFIG = Object.freeze({
   "mode": "supabase",
