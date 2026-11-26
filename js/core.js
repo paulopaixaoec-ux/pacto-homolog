@@ -439,7 +439,7 @@
         const d = i === rows.length - 1 ? left : Math.round((e.discountCents * s.amountCents) / e.grossCents);
         left -= d;
         s.discountCents = d; s.paidCents = s.amountCents - d; s.status = 'paid'; s.paidAt = r.paidAt;
-        s.reports.push({ id: r.id + ':' + s.id, by: r.by, at: r.at, amountCents: s.paidCents, paidAt: r.paidAt, comment: 'Antecipação', attachment: r.attachment, status: 'approved', locked: true, earlyId: e.id });
+        s.reports.push({ id: r.id + ':' + s.id, by: r.by, at: r.at, amountCents: s.paidCents, paidAt: r.paidAt, comment: 'Antecipação', attachment: r.attachment, status: 'approved', locked: true, earlyId: e.id, reviewedAt: at, reviewedBy: userId });
       });
       e.status = 'settled'; e.closedAt = at;
       refreshStatus(ag);
@@ -785,7 +785,9 @@
         if (['replaced', 'consolidated'].includes(s.status) && !s.paidCents) return;
         const open = OPEN.includes(s.status) || s.status === 'review';
         const rem = remainingOf(s);
-        const paidThisMonth = s.reports.filter((x) => x.status === 'approved' && (x.reviewedAt || '').slice(0, 7) === month).reduce((t, x) => t + x.amountCents, 0);
+        // PRB-04: parcela quitada por antecipação guarda a aprovação na antecipação (closedAt), não no item → usa-a como data
+        const approvedAt = (x) => x.reviewedAt || (x.earlyId && ((a.early || []).find((e) => e.id === x.earlyId) || {}).closedAt) || '';
+        const paidThisMonth = s.reports.filter((x) => x.status === 'approved' && approvedAt(x).slice(0, 7) === month).reduce((t, x) => t + x.amountCents, 0);
         if (r === 'seller') {
           if (open && s.due.slice(0, 7) === month) add(seller.forecastMonth, item(a, s), rem);
           if (paidThisMonth) add(seller.receivedMonth, item(a, s, { paid: true }), paidThisMonth);
