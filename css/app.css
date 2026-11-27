@@ -703,6 +703,10 @@ select { height: 40px; padding: 0 10px; border-radius: 12px; border: 1px solid v
 .welcome .hello { margin: 0 0 12px; align-items: flex-end; gap: 8px 16px; }
 .wl-top { display: flex; align-items: center; gap: 6px 10px; flex-wrap: wrap; margin: 0 0 2px; }
 #wl-greet { line-height: 1.2; }
+/* t59u: data e clima do Início — --muted perdia contraste no véu e no blob à direita (clima 4,28:1). Só esta linha passa a usar --ink (já da paleta, o mesmo do título) e o clima ganha peso 700. */
+.welcome #wl-date,
+.welcome .wx-chip { color: var(--ink); }
+.welcome .wx-chip { font-weight: 700; }
 .wx-chip { display: inline-flex; align-items: center; gap: 5px; border: 0; background: transparent; padding: 2px 8px; border-radius: 999px; font: inherit; font-size: 11.5px; font-weight: 650; color: var(--muted); cursor: pointer; max-width: 100%; }
 .wx-chip:hover, .wx-chip:focus-visible { background: var(--ok-bg); color: var(--ink, inherit); }
 .wx-chip[data-state='ok'] svg { color: var(--lime-strong); }
