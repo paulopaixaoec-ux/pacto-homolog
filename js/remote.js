@@ -46,7 +46,19 @@
     return false;
   }
 
-  function createRemoteAPI({ supabase: sb, functionsUrl, anonKey, clock = { now: () => new Date() }, redirectTo, functionsRegion }) {
+  /** Armazém da marca de bloqueio: localStorage (compartilhado entre abas, com evento `storage`); sem localStorage cai para memória. */
+  function defaultLockStore() {
+    const KEY = 'pacto82-lock'; let mem = null;
+    const ls = () => { try { return typeof localStorage !== 'undefined' ? localStorage : null; } catch { return null; } };
+    return {
+      get() { const l = ls(); return l ? l.getItem(KEY) : mem; },
+      set(v) { const l = ls(); if (l) l.setItem(KEY, v); else mem = v; },
+      del() { const l = ls(); if (l) l.removeItem(KEY); else mem = null; },
+      watch(fn) { if (typeof window !== 'undefined' && window.addEventListener) window.addEventListener('storage', (e) => { if (e.key === KEY || e.key === null) fn(); }); },
+    };
+  }
+
+  function createRemoteAPI({ supabase: sb, functionsUrl, anonKey, clock = { now: () => new Date() }, redirectTo, functionsRegion, lockStore: lockStoreOpt, proofClient }) {
     const now = () => clock.now();
     // o link de recuperação volta para a mesma página (dentro da lista de URLs permitidas do Supabase) com um marcador de ação
     const recoveryUrl = String(redirectTo || '') + (String(redirectTo || '').includes('?') ? '&' : '?') + 'acao=nova-senha';
@@ -54,9 +66,11 @@
     let LT = null, LKEY = null, lastSeen = Date.now(), locked = false, expiresAt = 0;
     let snap = null, snapP = null, dirty = true, channel = null, rtStatus = 'off', pollT = null;
     const authListeners = new Set();
+    const lockListeners = new Set();
+    const lockStore = lockStoreOpt || defaultLockStore();
     let stepUpHandler = null; // UI registra: pede o código TOTP e chama api.mfaVerify
     const loginFails = { n: 0, until: 0 }; // atraso progressivo no aparelho (o limite real é o do Supabase Auth)
-    const emit = () => { dirty = true; subs.forEach((fn) => { try { fn(); } catch {} }); };
+    const emit = () => { dirty = true; if (locked) return; subs.forEach((fn) => { try { fn(); } catch {} }); };
 
     const err = (e) => (e instanceof PactoError ? e : new PactoError(e && e.code || 'NETWORK', (e && e.message) || 'Falha de conexão.'));
     const authErr = (e) => {
@@ -76,15 +90,95 @@
 
     const cap = (t) => (t ? { captchaToken: String(t) } : {}); // CAPTCHA (Turnstile/hCaptcha) só quando a tela tiver um token
 
-    async function startLocal(session) {
+    /** Estado do bloqueio por inatividade. Fica no aparelho (localStorage), vale para todas as abas e sobrevive a recarregar/fechar o navegador.
+        Na dúvida (marca ausente, ilegível, de outra conta ou de “futuro”) o app abre BLOQUEADO. */
+    const LOCK_DEFAULT_MIN = 10;
+    const lockMin = (v) => (Number.isFinite(Number(v)) && Number(v) >= 1 && Number(v) <= 240 ? Number(v) : LOCK_DEFAULT_MIN);
+    function readLock() {
+      let raw = null; try { raw = lockStore.get(); } catch { return { bad: true }; }
+      if (raw == null) return null;
+      try {
+        const o = JSON.parse(raw);
+        if (o && typeof o === 'object' && typeof o.uid === 'string' && o.uid && typeof o.locked === 'boolean' && Number.isFinite(o.last) && Number.isFinite(o.min)) return o;
+      } catch {}
+      return { bad: true };
+    }
+    function writeLock(patch) {
+      const cur = readLock(); const base = cur && !cur.bad ? cur : { uid: lockUid || '', locked: true, last: 0, min: LOCK_DEFAULT_MIN };
+      const nx = { ...base, ...patch };
+      try { lockStore.set(JSON.stringify(nx)); } catch {}
+      return nx;
+    }
+    let lockUid = '', lastStamp = 0;
+    /** atividade real da pessoa (toque, tecla, escrita): atualiza o relógio de inatividade compartilhado entre as abas */
+    function stamp(force) {
+      const t = Date.now(); lastSeen = t;
+      if (locked || !lockUid) return;
+      if (!force && t - lastStamp < 4000) return; lastStamp = t;
+      writeLock({ last: t });
+    }
+    function lastActivity() { const r = readLock(); return Math.max(lastSeen, r && !r.bad && r.uid === lockUid ? r.last : 0); }
+    function idleExceeded() {
+      const r = readLock(); const t = Date.now();
+      if (!r || r.bad || r.uid !== lockUid || r.last > t + 60000) return true; // na dúvida, bloqueia
+      return t - Math.max(lastSeen, r.last) > lockMin(r.min) * 60000;
+    }
+    function isLocked() { if (locked) return true; if (!LT) return false; if (idleExceeded()) { applyLock(true); return true; } return false; }
+    /** bloqueia: derruba Realtime/polling e descarta os dados em memória; a sessão do Supabase continua viva (renovação automática) */
+    function applyLock(persist) {
+      locked = true;
+      if (persist) { writeLock({ locked: true }); serverLock(); }
+      if (channel) { try { sb.removeChannel(channel); } catch {} channel = null; }
+      clearInterval(pollT); pollT = null; rtStatus = 'off'; snap = null; snapP = null; dirty = true;
+    }
+    function lockedErr() { return new PactoError('LOCKED', 'Sessão bloqueada por inatividade.'); }
+
+    /* ---------- t44u · bloqueio imposto pelo SERVIDOR (por sessão do Supabase Auth) ----------
+       O servidor guarda a janela de desbloqueio desta sessão (session_id do JWT, que não muda no refresh). Bloqueado, a RLS não
+       devolve nenhuma linha, o Realtime não entrega eventos e a pacto-api responde 423. Aqui só acompanhamos o estado. */
+    let srv = null, lastSrvTouch = 0, srvTouchP = null;
+    function notifyLocked() { lockListeners.forEach((fn) => { try { fn('locked'); } catch {} }); }
+    function serverSaysLocked(st) { return !!(st && st.enforced && !st.unlocked); }
+    async function serverStatus() {
+      try { const { data, error } = await sb.rpc('pacto_lock_status'); if (error || !data) return null; srv = data; return data; } catch { return null; }
+    }
+    /** bloquear agora também no servidor (todas as abas desta sessão); falha de rede não impede o bloqueio local */
+    // se a rede falhar no momento do bloqueio, repete: ao voltar a conexão/aba e a cada 15 s enquanto continuar bloqueado
+    let srvLockPending = false, srvLockT = null;
+    function serverLock() {
+      srvLockPending = true;
+      if (!srvLockT) { srvLockT = setInterval(retryServerLock, 15000); if (srvLockT && typeof srvLockT.unref === 'function') srvLockT.unref(); }
+      try {
+        const r = sb.rpc('pacto_lock');
+        if (r && r.then) r.then((x) => { if (!x || !x.error) { srvLockPending = false; clearInterval(srvLockT); srvLockT = null; } }, () => {});
+      } catch {}
+    }
+    function retryServerLock() { if (srvLockPending && locked && LT) serverLock(); else { if (!LT) srvLockPending = false; if (!srvLockPending) { clearInterval(srvLockT); srvLockT = null; } } }
+    /** batimento: enquanto a pessoa usa o app, estende a janela no servidor (nunca reabre uma janela vencida) */
+    function serverTouch(force) {
+      if (!LT || locked || srvTouchP) return srvTouchP;
+      const t = Date.now(); if (!force && t - lastSrvTouch < 30000) return null; lastSrvTouch = t;
+      srvTouchP = Promise.resolve().then(() => sb.rpc('pacto_unlock_touch')).then(({ data }) => {
+        if (data) { srv = data; if (serverSaysLocked(data) && LT && !locked) { applyLock(true); notifyLocked(); } }
+        return data;
+      }, () => null).finally(() => { srvTouchP = null; });
+      return srvTouchP;
+    }
+    /** pede ao servidor o desbloqueio DESTA sessão. proof: token de sessão temporária (senha recém-confirmada); sem proof: autenticação recém-feita */
+    async function serverUnlock(proof) { return invokeOnce('unlock', proof ? [{ proof }] : []); }
+
+    async function startLocal(session, opts = {}) {
       rememberAuth(session);
       LT = C.randomToken(32); LKEY = await C.sha256Hex('session:' + LT);
-      lastSeen = Date.now(); locked = false; expiresAt = Date.now() + 8 * 3600 * 1000;
+      lastSeen = opts.last || Date.now(); locked = !!opts.locked; expiresAt = Date.now() + 8 * 3600 * 1000;
+      lockUid = session.user.id; lastStamp = 0;
       dirty = true; snap = null;
+      if (locked) { writeLock({ uid: lockUid, locked: true }); return LT; } // bloqueado: sem leitura de dados e sem Realtime até a senha ser confirmada
+      writeLock({ uid: lockUid, locked: false, last: lastSeen, min: lockMin((readLock() || {}).min) });
       startSync(session.user.id, session.access_token);
       return LT;
     }
-    function stopLocal() { LT = null; LKEY = null; snap = null; dirty = true; if (channel) { try { sb.removeChannel(channel); } catch {} channel = null; } clearInterval(pollT); rtStatus = 'off'; }
+    function stopLocal() { LT = null; LKEY = null; snap = null; dirty = true; locked = false; lockUid = ''; try { lockStore.del(); } catch {} if (channel) { try { sb.removeChannel(channel); } catch {} channel = null; } clearInterval(pollT); rtStatus = 'off'; }
 
     /** Realtime privado: o token do canal precisa acompanhar a sessão (JWT de 600 s). */
     function rtAuth(token) { try { if (token && sb.realtime && typeof sb.realtime.setAuth === 'function') { const r = sb.realtime.setAuth(token); if (r && r.catch) r.catch(() => {}); } } catch {} }
@@ -103,6 +197,7 @@
       // reserva: se o Realtime cair, confere a cada 20 s; com Realtime ativo, a cada 2 min
       let tick = 0;
       pollT = setInterval(() => { tick++; if (rtStatus !== 'SUBSCRIBED' || tick % 6 === 0) emit(); }, 20000);
+      if (pollT && typeof pollT.unref === 'function') pollT.unref(); // só Node (testes): não segura o processo
       if (typeof window !== 'undefined') window.addEventListener('focus', emit);
     }
 
@@ -151,9 +246,11 @@
     function q(res, what) { if (res.error) throw new PactoError('NETWORK', 'Falha ao ler ' + what + ': ' + res.error.message); return res.data; }
 
     async function loadSnapshot() {
+      if (isLocked()) throw lockedErr();
       const session = await requireSession();
       const uid = session.user.id;
-      const [me, contacts, ags, cons, evs, nots, obx] = await Promise.all([
+      const [st, me, contacts, ags, cons, evs, nots, obx] = await Promise.all([
+        serverStatus(),
         sb.from('profiles').select('*').eq('id', uid).single(),
         sb.rpc('my_contacts'),
         sb.from('agreements').select('doc').order('created_at', { ascending: false }).limit(1000),
@@ -162,17 +259,23 @@
         sb.from('notifications').select('doc,read').order('at', { ascending: false }).limit(600),
         sb.from('outbox').select('doc').order('at', { ascending: false }).limit(500),
       ]);
+      // servidor diz que esta sessão está bloqueada: a RLS devolveu listas vazias — descarta tudo e mostra o bloqueio
+      if (serverSaysLocked(st)) { applyLock(false); writeLock({ locked: true }); notifyLocked(); throw lockedErr(); }
       const state = buildState({
         me: q(me, 'perfil'), contacts: q(contacts, 'contatos') || [], agreements: (q(ags, 'acordos') || []).map((r) => r.doc),
         consolidations: (q(cons, 'unificações') || []).map((r) => r.doc), events: (q(evs, 'histórico') || []).map((r) => r.ev),
         notifications: q(nots, 'notificações') || [], outbox: (q(obx, 'saída') || []).map((r) => r.doc).reverse(),
       }, { key: LKEY, value: { userId: uid, createdAt: lastSeen, lastSeen, expiresAt, locked, ua: 'web' } });
+      if (isLocked()) throw lockedErr(); // bloqueou enquanto lia: descarta
+      const mine = state.users[0] && state.users[0].prefs && state.users[0].prefs.autoLockMin;
+      if (mine && lockUid === uid) { const r = readLock(); if (r && !r.bad && r.min !== lockMin(mine)) writeLock({ min: lockMin(mine) }); }
       const adapter = API.memoryAdapter();
       adapter.save(state);
       return { api: API.createPactoAPI({ adapter, clock }), adapter, uid, email: session.user.email };
     }
     async function local() {
       if (!LT) throw new PactoError('UNAUTHENTICATED', 'Entre novamente.');
+      if (isLocked()) throw lockedErr();
       if (dirty || !snap) {
         if (!snapP) snapP = loadSnapshot().then((s) => { snap = s; dirty = false; snapP = null; return s; }, (e) => { snapP = null; throw e; });
         await snapP;
@@ -188,6 +291,7 @@
       return recoverSession(minLeftSec);
     }
     async function invoke(method, args) {
+      if (LT && isLocked()) throw lockedErr();
       try { return await invokeOnce(method, args); }
       catch (e0) {
         let e = e0;
@@ -225,6 +329,7 @@
       if (!res.ok || !body || body.error) {
         const e = (body && body.error) || {};
         const pe = new PactoError(e.code || 'SERVER', e.message || 'O servidor recusou a operação (' + res.status + ').'); pe.httpStatus = res.status;
+        if (res.status === 423 && LT && !locked) { applyLock(true); notifyLocked(); }
         if (res.status === 401) Object.defineProperty(pe, 'sentToken', { value: session.access_token, enumerable: false });
         throw pe;
       }
@@ -236,7 +341,25 @@
       today: () => C.brtDate(now()),
       now,
       /* ---------- autenticação (Supabase Auth) ---------- */
-      async restore() { const { data } = await sb.auth.getSession(); if (!data || !data.session) return null; return { token: await startLocal(data.session) }; },
+      /** Reabre a sessão guardada. Só entra DESBLOQUEADO se a marca de bloqueio for legível, da mesma conta, não estiver bloqueada e a inatividade não passou do limite;
+          caso contrário abre bloqueado (sem ler dados e sem Realtime). `fresh`: acabou de autenticar (link de e-mail/recuperação de senha). */
+      async restore({ fresh = false } = {}) {
+        const { data } = await sb.auth.getSession(); if (!data || !data.session) { try { lockStore.del(); } catch {} return null; }
+        const ses = data.session; const r = readLock(); const t = Date.now();
+        let ok = fresh || (r && !r.bad && r.uid === ses.user.id && r.locked === false && r.last <= t + 60000 && t - r.last <= lockMin(r.min) * 60000);
+        if (fresh) { try { await serverUnlock(null); } catch {} } // link de e-mail/recuperação: autenticação recém-feita desbloqueia esta sessão no servidor
+        else if (ok) { const st = await serverStatus(); if (serverSaysLocked(st)) ok = false; } // o servidor manda: janela vencida/sessão bloqueada => abre bloqueado
+        else serverLock();
+        if (!ok) { lockUid = ses.user.id; lastSeen = 0; }
+        const token = await startLocal(ses, { locked: !ok, last: ok && !fresh ? r.last : 0 }); // recarregar NÃO conta como atividade: o relógio de inatividade segue de onde estava
+        return { token, locked: !ok };
+      },
+      isLocked() { return isLocked(); },
+      lastActivity() { return lastActivity(); },
+      /** atividade da pessoa (a tela chama em toque/tecla/rolagem); barato: grava no máximo a cada 4 s */
+      activity() { if (LT && !locked) { stamp(false); serverTouch(false); } },
+      /** avisos de outra aba: 'locked' | 'unlocked' */
+      onLock(fn) { lockListeners.add(fn); return () => lockListeners.delete(fn); },
       onAuthEvent(fn) { authListeners.add(fn); return () => authListeners.delete(fn); },
       async signup({ email, name, password, captchaToken }) {
         email = String(email || '').trim().toLowerCase(); name = C.cleanText(name, 60);
@@ -245,7 +368,7 @@
         const probs = C.passwordProblems(password); if (probs.length) throw new PactoError('WEAK_PASSWORD', 'Senha fraca: ' + probs.join(', ') + '.');
         const { data, error } = await sb.auth.signUp({ email, password, options: { data: { name }, emailRedirectTo: redirectTo, ...cap(captchaToken) } });
         if (error) throw authErr(error);
-        if (data.session) return { token: await startLocal(data.session), user: null, pending: false };
+        if (data.session) { try { await serverUnlock(null); } catch {} return { token: await startLocal(data.session), user: null, pending: false }; }
         return { pending: true, email };
       },
       async login({ email, password, captchaToken }) {
@@ -257,19 +380,51 @@
           throw authErr(error);
         }
         loginFails.n = 0; loginFails.until = 0;
+        try { await serverUnlock(null); } catch {} // entrar com senha desbloqueia ESTA sessão no servidor (antes de ler dados ou abrir o Realtime)
         const token = await startLocal(data.session);
         try { await invoke('claim', []); } catch {}
         return { token, user: null };
       },
       async logout() { stopLocal(); try { await sb.auth.signOut({ scope: 'local' }); } catch {} return true; },
-      async lock() { locked = true; return true; },
+      async lock() { if (LT) applyLock(true); return true; },
       async unlock(token, password, captchaToken) {
         const s = await requireSession();
-        const { error } = await sb.auth.signInWithPassword({ email: s.user.email, password: String(password || ''), options: cap(captchaToken) });
-        if (error) throw (/Invalid login/i.test(error.message) ? new PactoError('BAD_CREDENTIALS', 'Senha incorreta.') : authErr(error));
-        locked = false; lastSeen = Date.now(); return true;
+        if (s.user && lockUid && s.user.id !== lockUid) throw new PactoError('UNAUTHENTICATED', 'Entre novamente.');
+        let proof = null, ses = s, pc = null;
+        if (proofClient) {
+          // confere a senha numa sessão TEMPORÁRIA (não substitui a sessão atual, que segue com o mesmo session_id e o mesmo nível AAL);
+          // o servidor revoga a temporária logo em seguida (uso único)
+          pc = proofClient();
+          const { data, error } = await pc.auth.signInWithPassword({ email: s.user.email, password: String(password || ''), options: cap(captchaToken) });
+          if (error) throw (/Invalid login/i.test(error.message) ? new PactoError('BAD_CREDENTIALS', 'Senha incorreta.') : authErr(error));
+          if (!data || !data.session || data.session.user.id !== s.user.id) throw new PactoError('UNAUTHENTICATED', 'Entre novamente.');
+          proof = data.session.access_token;
+        } else {
+          const { data, error } = await sb.auth.signInWithPassword({ email: s.user.email, password: String(password || ''), options: cap(captchaToken) });
+          if (error) throw (/Invalid login/i.test(error.message) ? new PactoError('BAD_CREDENTIALS', 'Senha incorreta.') : authErr(error));
+          ses = (data && data.session) || s;
+        }
+        try { await serverUnlock(proof); }
+        catch (e) {
+          if (pc) { try { await pc.auth.signOut({ scope: 'local' }); } catch {} } // o servidor não revogou: encerra a sessão temporária daqui
+          // sem resposta do servidor: só segue se o servidor ainda NÃO impõe o bloqueio a esta conta (modo desligado/fora do canário)
+          const st = await serverStatus();
+          if (!(st && !st.enforced)) throw (e && e.code === 'UNLOCK_PROOF' ? new PactoError('BAD_CREDENTIALS', 'Não foi possível confirmar sua senha. Tente de novo.') : err(e));
+        }
+        if (ses.user && ses.user.id !== lockUid) throw new PactoError('UNAUTHENTICATED', 'Entre novamente.');
+        locked = false; srvLockPending = false; lastSeen = Date.now(); lastStamp = 0; lastSrvTouch = Date.now(); writeLock({ uid: lockUid, locked: false, last: lastSeen });
+        dirty = true; snap = null;
+        const cur = (await freshSession(30)) || ses;
+        startSync(cur.user.id, cur.access_token); // só agora volta a ler dados e a assinar o Realtime
+        return true;
       },
-      async touch() { if (!LT) throw new PactoError('UNAUTHENTICATED', 'Entre novamente.'); if (!locked) lastSeen = Date.now(); return true; },
+      async touch() {
+        if (!LT) throw new PactoError('UNAUTHENTICATED', 'Entre novamente.'); if (isLocked()) throw lockedErr(); stamp(true);
+        const st = await serverTouch(true); if (serverSaysLocked(st)) throw lockedErr();
+        return true;
+      },
+      /** estado do bloqueio no servidor (para a tela e os testes) */
+      async lockStatus() { return serverStatus(); },
       async sessionInfo(token) { const s = await local(); return s.api.sessionInfo(LT); },
       async listSessions() { await requireSession(); return [{ current: true, createdAt: lastSeen, lastSeen, ua: (typeof navigator !== 'undefined' ? navigator.userAgent : '').slice(0, 80) }]; },
       async revokeOtherSessions() { const { error } = await sb.auth.signOut({ scope: 'others' }); if (error) throw authErr(error); return true; },
@@ -336,6 +491,7 @@
         const s = await requireSession();
         const re = await sb.auth.signInWithPassword({ email: s.user.email, password: String(current || ''), options: cap(captchaToken) });
         if (re.error) throw new PactoError('BAD_CREDENTIALS', 'Senha atual incorreta.');
+        try { await serverUnlock(null); } catch {} // a confirmação abre uma sessão nova: desbloqueia-a no servidor (autenticação recém-feita)
         const { error } = await sb.auth.updateUser({ password: next }); if (error) throw authErr(error);
         try { await sb.auth.signOut({ scope: 'others' }); } catch {}
         return true;
@@ -401,20 +557,25 @@
       get realtimeStatus() { return rtStatus; },
     };
     READ.forEach((m) => { api[m] = async (token, ...args) => { try { const s = await local(); return await s.api[m](LT, ...args); } catch (e) { throw err(e); } }; });
-    const idleLocked = () => { const st = snap && snap.adapter.load(); const me = st && st.users[0]; const min = (me && me.prefs && me.prefs.autoLockMin) || 10; return locked || Date.now() - lastSeen > min * 60000; };
     WRITE.forEach((m) => { api[m] = async (token, ...args) => {
-      if (idleLocked()) { locked = true; throw new PactoError('LOCKED', 'Sessão bloqueada por inatividade.'); }
-      if (m !== 'runReminders') lastSeen = Date.now();
+      if (isLocked()) throw lockedErr();
+      if (m !== 'runReminders') stamp(true);
       try { const r = await invoke(m, args); return r; } finally { dirty = true; }
     }; });
 
     if (typeof document !== 'undefined' && typeof window !== 'undefined') {
       // supabase-js já renova sozinho (autoRefreshToken); aqui garantimos a renovação ao VOLTAR (celular que dormiu, aba em segundo plano)
-      const onResume = () => { if (document.visibilityState === 'visible') { try { sb.auth.startAutoRefresh(); } catch {} api.resumeSession(); } };
+      const onResume = () => { retryServerLock(); if (document.visibilityState === 'visible') { try { sb.auth.startAutoRefresh(); } catch {} api.resumeSession(); } };
       document.addEventListener('visibilitychange', onResume);
       window.addEventListener('pageshow', onResume);
       window.addEventListener('online', onResume);
     }
+    // outra aba bloqueou/desbloqueou: acompanha na hora (evento storage)
+    if (lockStore.watch) lockStore.watch(() => {
+      const r = readLock(); if (!LT) return;
+      if ((!r || r.bad || r.locked || r.uid !== lockUid) && !locked) { applyLock(false); lockListeners.forEach((fn) => { try { fn('locked'); } catch {} }); }
+      else if (r && !r.bad && !r.locked && r.uid === lockUid && locked) { lockListeners.forEach((fn) => { try { fn('unlocked'); } catch {} }); }
+    });
     sb.auth.onAuthStateChange((event, session) => {
       if (event === 'SIGNED_OUT') stopLocal();
       else if (session && session.access_token && (event === 'TOKEN_REFRESHED' || event === 'SIGNED_IN')) rtAuth(session.access_token);

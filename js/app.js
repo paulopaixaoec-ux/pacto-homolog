@@ -21,7 +21,9 @@
     ? window.PactoRemote.createRemoteAPI({
       supabase: window.supabase.createClient(CFG.supabaseUrl, CFG.supabaseAnonKey, { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true, storageKey: 'pacto82-auth' } }),
       functionsUrl: CFG.functionsUrl || CFG.supabaseUrl.replace(/\/$/, '') + '/functions/v1', anonKey: CFG.supabaseAnonKey, clock,
-      redirectTo: CFG.redirectTo || (location.origin + location.pathname), functionsRegion: CFG.functionsRegion || '' })
+      redirectTo: CFG.redirectTo || (location.origin + location.pathname), functionsRegion: CFG.functionsRegion || '',
+      // t44u: confirma a senha do desbloqueio numa sessão temporária (sem gravar no aparelho); o servidor a revoga em seguida
+      proofClient: () => window.supabase.createClient(CFG.supabaseUrl, CFG.supabaseAnonKey, { auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false, storageKey: 'pacto82-proof' } }) })
     : window.PactoAPI.createPactoAPI({ adapter, clock });
   const ENV_LABEL = REMOTE ? (CFG.envLabel || 'Homologação 8.2') : 'Demonstração local';
   if (!REMOTE) window.__pacto = { api, C }; // depuração local (só no modo demonstração)
@@ -77,7 +79,7 @@
     mfaProbe();
     tourTick();
   }
-  function signOutLocal() { S.token = null; S.me = null; S.mfaOn = undefined; S.forgotUntil = 0; sessionStorage.removeItem('pacto8:token'); hideLock(); closeSheet(true); render(); }
+  function signOutLocal() { lockDraft = null; S.token = null; S.me = null; S.mfaOn = undefined; S.forgotUntil = 0; sessionStorage.removeItem('pacto8:token'); hideLock(); closeSheet(true); render(); }
   function applyPrefs() {
     const me = S.me; if (!me) return;
     U.setLang(me.lang);
@@ -230,16 +232,26 @@
     };
   }
   async function lockNow() { S.menu = false; try { await api.lock(S.token); } catch {} showLock(); }
+  /** Bloqueio: some tudo que é financeiro da tela e da memória do app (a conta só mostra o que a tela de bloqueio precisa). */
+  let lockDraft = null; // rascunho do assistente “Novo acordo”: fica só na memória da aba (nunca em disco) enquanto bloqueado e volta depois da senha
+  function scrubForLock() {
+    if (S.wiz && S.me) lockDraft = { uid: S.me.id, wiz: S.wiz };
+    Object.assign(S, { ags: [], cons: [], ntf: [], feed: [], dash: null, people: {}, wiz: null, menu: false });
+    try { closeSheet(true); } catch {}
+    ['mfa-setup', 'mfa-recover', 'tour'].forEach((id) => { const e = document.getElementById(id); if (e) e.remove(); });
+    document.querySelectorAll('.toast, #toasts > *').forEach((e) => e.remove());
+    $root().replaceChildren(); document.title = 'PACTO';
+  }
   function showLock() {
-    if (S.locked) return; S.locked = true;
+    if (S.locked) return; S.locked = true; scrubForLock();
     const pw = h('input', { type: 'password', autocomplete: 'current-password', class: 'input', placeholder: 'Sua senha', 'aria-label': 'Senha' });
     const err = h('div', { class: 'err', role: 'alert' });
     const cap = captchaBox();
-    const unlock = async () => { try { await api.unlock(S.token, pw.value, await cap.need()); cap.reset(); hideLock(); S.lastAct = Date.now(); refresh(); } catch (e) { if (['EXPIRED', 'UNAUTHENTICATED'].includes(e.code)) { hideLock(); signOutLocal(); } cap.reset(); err.textContent = e.message; } };
+    const unlock = async () => { try { await api.unlock(S.token, pw.value, await cap.need()); cap.reset(); hideLock(); S.lastAct = Date.now(); if (S.bootLocked) { S.bootLocked = false; try { await api.claim(S.token); } catch {} } const keep = lockDraft; lockDraft = null; refresh().then(() => { if (keep && S.me && keep.uid === S.me.id && String(location.hash).startsWith('#/novo')) { S.wiz = keep.wiz; render(); toast('Seu rascunho foi mantido.'); } }); } catch (e) { if (['EXPIRED', 'UNAUTHENTICATED'].includes(e.code)) { hideLock(); try { await api.logout(S.token); } catch {} signOutLocal(); } cap.reset(); err.textContent = e.message; } };
     pw.addEventListener('keydown', (e) => { if (e.key === 'Enter') unlock(); });
     const demo = S.me && S.me.demo;
     const el = h('div', { class: 'lockscreen', id: 'lock', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Sessão bloqueada' },
-      h('div', { class: 'lock-card glass-strong' }, avatar(S.me, 72), h('h2', { style: { margin: '6px 0 0' }, text: 'Sessão bloqueada' }), h('p', { class: 'muted', style: { margin: 0 }, text: 'Por segurança, o PACTO bloqueia após inatividade. Digite sua senha para continuar.' }),
+      h('div', { class: 'lock-card glass-strong' }, S.me ? avatar(S.me, 72) : h('span', { class: 'ev-ico warn', style: { width: '72px', height: '72px' } }, icon('lock', 30)), h('h2', { style: { margin: '6px 0 0' }, text: 'Sessão bloqueada' }), h('p', { class: 'muted', style: { margin: 0 }, text: 'Por segurança, o PACTO bloqueia após inatividade. Digite sua senha para continuar.' }),
         h('div', { style: { width: '100%' } }, pw), cap.el, err, demo ? h('div', { class: 'small muted' }, 'Conta demo · senha: ', h('code', { text: Seed.DEMO_PASSWORD })) : null,
         h('button', { class: 'btn block', on: { click: unlock } }, icon('lock', 18), 'Desbloquear'), h('button', { class: 'link-btn', on: { click: () => { hideLock(); logout(); } } }, 'Sair e entrar com outra conta')));
     document.body.appendChild(el); setTimeout(() => pw.focus(), 50);
@@ -509,10 +521,19 @@
   function tourReplay() { if (!S.me) return; TOUR.uid = meId(); go('#/inicio'); setTimeout(() => tourOpen(true), 80); }
   setInterval(() => { tourTick(); }, 1500);
   ['pointerdown', 'keydown', 'wheel', 'touchstart'].forEach((ev) => addEventListener(ev, () => {
-    S.lastAct = Date.now();
+    S.lastAct = Date.now(); if (REMOTE && S.token && !S.locked && api.activity) api.activity();
     if (S.token && !S.locked && Date.now() - S.lastTouch > 45000) { S.lastTouch = Date.now(); api.touch(S.token).catch((e) => { if (e.code === 'LOCKED') showLock(); }); }
   }, { passive: true }));
-  setInterval(() => { if (S.token && S.me && !S.locked && Date.now() - S.lastAct > (S.me.prefs.autoLockMin || 10) * 60000) lockNow(); }, 10000);
+  // REMOTE: a inatividade vem do relógio compartilhado entre abas (api.lastActivity); demo: relógio da própria aba
+  const idleCheck = () => {
+    if (!S.token || S.locked) return;
+    if (REMOTE && api.isLocked) { if (api.isLocked()) lockNow(); return; }
+    if (S.me && Date.now() - S.lastAct > (S.me.prefs.autoLockMin || 10) * 60000) lockNow();
+  };
+  setInterval(idleCheck, 10000);
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') idleCheck(); });
+  addEventListener('pageshow', idleCheck); addEventListener('focus', idleCheck);
+  if (REMOTE && api.onLock) api.onLock((ev) => { if (ev === 'locked') showLock(); else if (ev === 'unlocked' && S.locked) location.reload(); });
 
   /* ---------- autenticação ---------- */
   function pwInput(id, ac) {
@@ -547,7 +568,7 @@
           setToken(r.token); location.hash = '#/inicio'; await refresh(); toast(REMOTE ? 'Conta criada.' : 'Conta criada. Confirme seu e-mail para movimentar acordos.'); return;
         }
         if (mode === 'reset' && REMOTE) { await api.requestReset(email.value, await cap.need()); S.authEmail = email.value; S.authMode = 'resetSent'; render(); return; }
-        if (mode === 'newpass') { await api.resetPassword({ password: pw.value }); S.recovery = false; S.authMode = 'login'; const r = await api.restore(); if (r) { setToken(r.token); location.hash = '#/inicio'; await refresh(); } else render(); toast('Senha alterada. Outros aparelhos foram desconectados.'); return; }
+        if (mode === 'newpass') { await api.resetPassword({ password: pw.value }); S.recovery = false; S.authMode = 'login'; const r = await api.restore({ fresh: true }); if (r) { setToken(r.token); location.hash = '#/inicio'; await refresh(); } else render(); toast('Senha alterada. Outros aparelhos foram desconectados.'); return; }
         if (mode === 'reset') { await api.requestReset(email.value); S.authEmail = email.value; S.authMode = 'reset2'; render(); toast('Se o e-mail existir, enviamos um código.'); return; }
         if (mode === 'reset2') { await api.resetPassword({ email: email.value, code: code.value, password: pw.value }); S.authMode = 'login'; render(); toast('Senha alterada. Entre com a nova senha.'); return; }
       } catch (ex) { err.textContent = ex.message; cap.reset(); } finally { busy(submit, false); }
@@ -2029,6 +2050,7 @@
   /* ---------- render / roteamento ---------- */
   function render() {
     const root = $root();
+    if (S.locked && S.token) return; // bloqueado: nada financeiro é desenhado
     if (S.rec) { document.documentElement.dataset.theme = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'; root.replaceChildren(recoveryView()); return; }
     if (!S.token) { document.documentElement.dataset.theme = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'; root.replaceChildren(authView()); return; }
     if (!S.me) { root.replaceChildren(h('div', { class: 'main', style: { paddingTop: '30px' } }, U.skeleton(4))); return; }
@@ -2085,9 +2107,10 @@
       if (AL.kind === 'error') { S.rec = { stage: 'error', reason: AL.reason }; render(); return; }
       const pf = sessionStorage.getItem('pacto8:prefill'); if (pf) { S.authEmail = pf; S.authNotice = sessionStorage.getItem('pacto8:notice') || null; sessionStorage.removeItem('pacto8:prefill'); sessionStorage.removeItem('pacto8:notice'); }
       // o supabase-js só lê o #access_token (link de confirmação do cadastro) quando o getSession() inicializa: restaurar ANTES de limpar a URL, senão o login automático por e-mail se perde
-      const r = await api.restore();
+      const r = await api.restore({ fresh: /^#access_token=/.test(BOOT_URL.hash) }); // link de e-mail = autenticação nova; sessão guardada obedece à marca de bloqueio
       if (/^#(access_token|type|error)=/.test(BOOT_URL.hash) || /[?&](acao|code|token_hash)=/.test(BOOT_URL.search)) history.replaceState(null, '', location.pathname + '#/inicio');
-      if (r && !S.rec) { setToken(r.token); try { await api.claim(S.token); } catch {} await refresh(); }
+      if (r && !S.rec && r.locked) { setToken(r.token); S.bootLocked = true; S.loading = false; showLock(); } // bloqueado ao abrir: nenhuma leitura de dados, nenhum Realtime, nada na tela
+      else if (r && !S.rec) { setToken(r.token); try { await api.claim(S.token); } catch {} await refresh(); }
       else { S.token = null; sessionStorage.removeItem('pacto8:token'); render(); }
       setInterval(() => { if (S.token && !S.locked) api.runReminders(S.token).then((n) => { if (n) refresh(); }).catch(() => {}); }, 15 * 60000);
       return;
