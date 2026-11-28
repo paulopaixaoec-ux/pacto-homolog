@@ -74,12 +74,13 @@
       S.people = Object.fromEntries(people.map((p) => [p.id, p]));
       if (!S.homeRole) S.homeRole = ags.some((a) => a.sellerId === me.id) && !ags.some((a) => a.buyerId === me.id) ? 'seller' : 'buyer';
       applyPrefs();
+      if (window.PactoEmpresas && window.PactoEmpresas.refresh) await window.PactoEmpresas.refresh();
     } catch (e) { if (e.code === 'LOCKED') { S.loading = false; showLock(); return; } handleErr(e); }
     render();
     mfaProbe();
     tourTick();
   }
-  function signOutLocal() { lockDraft = null; S.token = null; S.me = null; S.mfaOn = undefined; S.forgotUntil = 0; sessionStorage.removeItem('pacto8:token'); hideLock(); closeSheet(true); render(); }
+  function signOutLocal() { if (STUDIO && STUDIO.reset) STUDIO.reset(); if (window.PactoEmpresas && window.PactoEmpresas.reset) window.PactoEmpresas.reset(); lockDraft = null; S.token = null; S.me = null; S.mfaOn = undefined; S.forgotUntil = 0; sessionStorage.removeItem('pacto8:token'); hideLock(); closeSheet(true); render(); }
   function applyPrefs() {
     const me = S.me; if (!me) return;
     U.setLang(me.lang);
@@ -145,11 +146,11 @@
   /* ---------- shell ---------- */
   const NAV = [['inicio', 'home', 'home'], ['acordos', 'doc', 'agreements'], ['calendario', 'calendar', 'calendar'], ['negociacoes', 'handshake', 'negotiations'], ['mais', 'grid', 'more']];
   const SIDE = [['inicio', 'home', 'home'], ['acordos', 'doc', 'agreements'], ['calendario', 'calendar', 'calendar'], ['pagamentos', 'wallet', 'payments'], ['negociacoes', 'handshake', 'negotiations'], ['clientes', 'users', 'clients'], ['projecoes', 'chart', 'projections'], ['assistente', 'robot', 'assistant'], ['notificacoes', 'bell', 'notifications'], ['perfil', 'user', 'profile']];
-  function navOf(page) { return { acordo: 'acordos', novo: 'acordos', unificar: 'negociacoes', cliente: 'clientes' }[page] || page; }
+  function navOf(page) { return { acordo: 'acordos', novo: 'acordos', unificar: 'negociacoes', cliente: 'clientes', agenda: 'calendario', orcamento: 'clientes', areas: 'mais', experiencia: 'mais' }[page] || page; }
   function tabOf(page) { const n = navOf(page); return ['inicio', 'acordos', 'calendario', 'negociacoes'].includes(n) ? n : 'mais'; }
   function logo(size = 30, { tagline = false } = {}) {
-    return h('span', { class: 'logo' + (tagline ? ' with-tag' : ''), role: 'img', 'aria-label': 'PACTO' + (tagline ? ' — ' + t('tagline') : '') },
-      U.brandMark(size), h('span', { class: 'logo-text', 'aria-hidden': 'true' }, h('span', { class: 'logo-word' }, 'PACTO'), tagline ? h('span', { class: 'logo-tag', text: t('tagline') }) : null));
+    return h('span', { class: 'logo' + (tagline ? ' with-tag' : ''), role: 'img', 'aria-label': 'PACTOX' + (tagline ? ' — ' + t('tagline') : '') },
+      U.brandMark(size), h('span', { class: 'logo-text', 'aria-hidden': 'true' }, h('span', { class: 'logo-word' }, 'PACTOX'), tagline ? h('span', { class: 'logo-tag', text: t('tagline') }) : null));
   }
 
   function shell(title, sub, content, { fab } = {}) {
@@ -160,14 +161,17 @@
       SIDE.map(([p, ic, k]) => h('button', { class: 'nav-item', 'aria-current': active === p ? 'page' : null, title: t(k), dataset: { p }, on: { click: () => go('#/' + p) } }, icon(ic, 20), h('span', { class: 'lbl', text: t(k) }),
         p === 'negociacoes' && acts ? [h('span', { class: 'cnt', text: String(acts) }), h('i', { class: 'ndot' })] : null,
         p === 'notificacoes' && nu ? [h('span', { class: 'cnt', text: String(nu) }), h('i', { class: 'ndot' })] : null)),
+      EMP && EMP.active ? h('button', { class: 'nav-item', 'aria-current': active === 'calendario' && route().page === 'agenda' ? 'page' : null, title: 'Agenda do negócio', dataset: { p: 'agenda' }, on: { click: () => go('#/agenda') } }, icon('calendar', 20), h('span', { class: 'lbl', text: 'Agenda PX PRO' })) : null,
+      EMP && EMP.active ? h('button', { class: 'nav-item', 'aria-current': route().page === 'orcamento' ? 'page' : null, title: 'Orçamentos', dataset: { p: 'orcamento' }, on: { click: () => go('#/orcamento') } }, icon('list', 20), h('span', { class: 'lbl', text: 'Orçamentos' })) : null,
+      STUDIO && STUDIO.founder ? h('button', { class: 'nav-item studio-nav', 'aria-current': active === 'studio' ? 'page' : null, title: 'PX CORE | Central do fundador', dataset: { p: 'studio' }, on: { click: () => go('#/studio/visao') } }, icon('spark', 20), h('span', { class: 'lbl', text: 'PX CORE' }), h('span', { class: 'studio-badge', 'aria-label': 'só fundador', text: 'F' })) : null,
       h('button', { class: 'btn lime', style: { margin: '14px 4px 0' }, on: { click: () => newAgreement() } }, icon('plus', 18), h('span', { class: 'lbl', text: t('newAgreement') })),
-      REMOTE ? h('div', { class: 'side-foot glass' }, h('b', null, ENV_LABEL), 'Contas e banco reais de teste. Use só dados fictícios. E-mail e WhatsApp: estrutura preparada, ainda não ativa.')
+      REMOTE ? h('div', { class: 'side-foot glass' }, h('b', null, ENV_LABEL), 'Contas e banco reais de teste. Use só dados fictícios. E-mail e WhatsApp: estrutura preparada, ainda não ativa.', h('div', { class: 'app-build', style: { textAlign: 'left', marginTop: '6px' }, text: 'Versão ' + ((window.PACTO_BUILD && window.PACTO_BUILD.version) || 'dev') }))
         : h('div', { class: 'side-foot glass' }, h('b', null, 'Ambiente de demonstração · 8.1'), 'Dados fictícios guardados só neste navegador. E-mail, push e WhatsApp ainda não estão ativos.'));
     const bell = h('button', { class: 'icon-btn', 'aria-label': `${t('notifications')}${nu ? ` (${nu} não lidas)` : ''}`, on: { click: () => go('#/notificacoes') } }, icon('bell', 20), nu ? h('span', { class: 'badge', text: nu > 99 ? '99+' : String(nu) }) : null);
     const av = h('div', { style: { position: 'relative' } }, h('button', { class: 'avatar-btn', 'aria-label': 'Conta e trocar usuário', 'aria-haspopup': 'menu', 'aria-expanded': String(S.menu), on: { click: (e) => { e.stopPropagation(); S.menu = !S.menu; render(); } } }, avatar(S.me, 42)), S.menu ? accountMenu() : null);
-    const top = h('header', { class: 'top' }, h('div', { class: 'brand-mini', role: 'img', 'aria-label': 'PACTO' }, U.brandMark(22, { small: true })), h('div', { class: 'titles' }, h('h1', { text: title }), sub ? h('div', { class: 'sub', text: sub }) : null), bell, av);
+    const top = h('header', { class: 'top' }, h('div', { class: 'brand-mini', role: 'img', 'aria-label': 'PACTOX' }, U.brandMark(22, { small: true })), h('div', { class: 'titles' }, h('h1', { text: title }), sub ? h('div', { class: 'sub', text: sub }) : null), (EMP && EMP.enabled && EMP.switcher) ? EMP.switcher() : null, bell, av);
     const tabbar = h('nav', { class: 'tabbar glass', 'aria-label': 'Navegação' }, h('span', { class: 'tab-pill', 'aria-hidden': 'true' }),
-      NAV.map(([p, ic, k]) => h('button', { class: 'tab', 'aria-current': tabOf(r.page) === p ? 'page' : null, dataset: { p }, on: { click: () => go('#/' + p) } }, icon(ic, 22), h('span', { text: t(k) }), p === 'negociacoes' && acts ? h('i', { class: 'dot', 'aria-label': `${acts} pendências` }) : null)));
+      NAV.map(([p, ic, k]) => h('button', { class: 'tab', 'aria-current': tabOf(r.page) === p ? 'page' : null, dataset: { p }, on: { click: () => go('#/' + (p === 'calendario' && EMP && EMP.active ? 'agenda' : p)) } }, icon(ic, 22), h('span', { text: t(k) }), p === 'negociacoes' && acts ? h('i', { class: 'dot', 'aria-label': `${acts} pendências` }) : null)));
     const app = h('div', { class: ['app', S.collapsed && 'collapsed'] }, side,
       h('div', { class: 'main' }, h('a', { class: 'skip', href: '#conteudo', on: { click: (e) => { e.preventDefault(); document.getElementById('conteudo').focus(); } } }, 'Pular para o conteúdo'), top, h('main', { id: 'conteudo', class: 'content', tabindex: '-1' }, content)),
       tabbar, fab ? h('button', { class: 'fab', on: { click: fab.onClick } }, icon('plus', 20), fab.label) : null);
@@ -198,7 +202,7 @@
     try { const r = await api.login({ email, password: Seed.DEMO_PASSWORD }); setToken(r.token); S.homeRole = null; location.hash = '#/inicio'; await refresh(); toast('Agora você está como ' + r.user.name); }
     catch (e) { S.token = null; handleErr(e); render(); }
   }
-  function setToken(tk) { S.token = tk; sessionStorage.setItem('pacto8:token', tk); S.lastAct = Date.now(); }
+  function setToken(tk) { if (STUDIO && STUDIO.refresh) STUDIO.refresh(); S.token = tk; sessionStorage.setItem('pacto8:token', tk); S.lastAct = Date.now(); }
   async function logout() { S.menu = false; try { await api.logout(S.token); } catch {} signOutLocal(); location.hash = '#/inicio'; }
 
   /* ---------- trava por inatividade ---------- */
@@ -240,7 +244,7 @@
     try { closeSheet(true); } catch {}
     ['mfa-setup', 'mfa-recover', 'tour'].forEach((id) => { const e = document.getElementById(id); if (e) e.remove(); });
     document.querySelectorAll('.toast, #toasts > *').forEach((e) => e.remove());
-    $root().replaceChildren(); document.title = 'PACTO';
+    $root().replaceChildren(); document.title = 'PACTOX';
   }
   function showLock() {
     if (S.locked) return; S.locked = true; scrubForLock();
@@ -251,7 +255,7 @@
     pw.addEventListener('keydown', (e) => { if (e.key === 'Enter') unlock(); });
     const demo = S.me && S.me.demo;
     const el = h('div', { class: 'lockscreen', id: 'lock', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Sessão bloqueada' },
-      h('div', { class: 'lock-card glass-strong' }, S.me ? avatar(S.me, 72) : h('span', { class: 'ev-ico warn', style: { width: '72px', height: '72px' } }, icon('lock', 30)), h('h2', { style: { margin: '6px 0 0' }, text: 'Sessão bloqueada' }), h('p', { class: 'muted', style: { margin: 0 }, text: 'Por segurança, o PACTO bloqueia após inatividade. Digite sua senha para continuar.' }),
+      h('div', { class: 'lock-card glass-strong' }, S.me ? avatar(S.me, 72) : h('span', { class: 'ev-ico warn', style: { width: '72px', height: '72px' } }, icon('lock', 30)), h('h2', { style: { margin: '6px 0 0' }, text: 'Sessão bloqueada' }), h('p', { class: 'muted', style: { margin: 0 }, text: 'Por segurança, o PACTOX bloqueia após inatividade. Digite sua senha para continuar.' }),
         h('div', { style: { width: '100%' } }, pw), cap.el, err, demo ? h('div', { class: 'small muted' }, 'Conta demo · senha: ', h('code', { text: Seed.DEMO_PASSWORD })) : null,
         h('button', { class: 'btn block', on: { click: unlock } }, icon('lock', 18), 'Desbloquear'), h('button', { class: 'link-btn', on: { click: () => { hideLock(); logout(); } } }, 'Sair e entrar com outra conta')));
     document.body.appendChild(el); setTimeout(() => pw.focus(), 50);
@@ -275,16 +279,16 @@
           h('h2', { style: { margin: '6px 0 0' }, text: 'Perdi meu autenticador' }),
           h('p', { class: 'muted', style: { margin: 0 }, text: 'Digite um dos códigos de recuperação que você guardou ao ativar a verificação em duas etapas. Cada código vale uma vez. Depois, ative de novo com o aparelho novo.' }),
           h('div', { style: { width: '100%' } }, code), err, go,
-          h('p', { class: 'small muted', style: { margin: 0 }, text: 'Sem códigos? Fale com o suporte do PACTO pelo e-mail da sua conta: a remoção assistida exige confirmação de identidade e espera de 72 horas.' }),
+          h('p', { class: 'small muted', style: { margin: 0 }, text: 'Sem códigos? Fale com o suporte do PACTOX pelo e-mail da sua conta: a remoção assistida exige confirmação de identidade e espera de 72 horas.' }),
           h('button', { class: 'link-btn', on: { click: () => done(false) } }, 'Cancelar')));
       document.body.appendChild(el); setTimeout(() => code.focus(), 50);
     });
   }
   function recoveryCodesView(codes, onDone) {
-    const txt = 'PACTO · códigos de recuperação da verificação em duas etapas\nGerados em ' + new Date().toLocaleString('pt-BR') + '\nCada código vale UMA vez. Guarde fora do celular (papel ou gerenciador de senhas).\n\n' + codes.join('\n') + '\n';
+    const txt = 'PACTOX · códigos de recuperação da verificação em duas etapas\nGerados em ' + new Date().toLocaleString('pt-BR') + '\nCada código vale UMA vez. Guarde fora do celular (papel ou gerenciador de senhas).\n\n' + codes.join('\n') + '\n';
     return h('div', { class: 'stack', style: { gap: '10px' } },
       h('div', { class: 'row wrap', style: { gap: '8px' } }, pill('Mostrados só agora', 'warn')),
-      h('p', { class: 'small', style: { margin: 0 }, text: 'Guarde estes códigos em lugar seguro, fora do celular. Se perder o app autenticador, um deles libera sua conta (uma vez cada). O PACTO não consegue mostrá-los de novo.' }),
+      h('p', { class: 'small', style: { margin: 0 }, text: 'Guarde estes códigos em lugar seguro, fora do celular. Se perder o app autenticador, um deles libera sua conta (uma vez cada). O PACTOX não consegue mostrá-los de novo.' }),
       h('div', { class: 'card', style: { padding: '10px 14px', display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))', gap: '6px 16px' } }, codes.map((c) => h('code', { text: c, style: { fontSize: '14px', letterSpacing: '.06em' } }))),
       h('div', { class: 'actions' },
         h('button', { class: 'btn ghost sm', on: { click: async () => { try { await navigator.clipboard.writeText(txt); toast('Códigos copiados.'); } catch { toast('Não foi possível copiar: anote os códigos.', 'err'); } } } }, icon('copy', 16), 'Copiar'),
@@ -330,19 +334,19 @@
         ios: [
           ['App recomendado: Google Authenticator ou Microsoft Authenticator (App Store, grátis). No iOS 18 ou mais novo você também pode usar o app “Senhas” da Apple, que já vem no iPhone.'],
           ['No app: toque em “+” e depois em “Ler código QR”. Se estiver neste mesmo iPhone, use “Inserir chave de configuração” e cole a chave do próximo passo.'],
-          ['App Senhas (Apple): toque em “+”, crie a entrada “PACTO”, toque em “Configurar código de verificação” e escolha “Inserir chave de configuração”.'],
+          ['App Senhas (Apple): toque em “+”, crie a entrada “PACTOX”, toque em “Configurar código de verificação” e escolha “Inserir chave de configuração”.'],
         ],
         android: [
           ['App recomendado: Google Authenticator ou Microsoft Authenticator (Play Store, grátis).'],
           ['No app: toque em “+” e depois em “Ler código QR”.'],
-          ['Se estiver neste mesmo celular, não dá para escanear a própria tela: escolha “Inserir chave de configuração”, nome “PACTO”, tipo “Baseada em tempo”, e cole a chave do próximo passo.'],
+          ['Se estiver neste mesmo celular, não dá para escanear a própria tela: escolha “Inserir chave de configuração”, nome “PACTOX”, tipo “Baseada em tempo”, e cole a chave do próximo passo.'],
         ],
       };
       const step1 = () => {
         body.replaceChildren(...head(1, 'Escolha onde ficará seu código', 'Leva cerca de 2 minutos. Seu app autenticador gera um código novo de 6 dígitos a cada 30 segundos; ele protege aceites, aprovações e renegociações.'),
           seg([['ios', 'iPhone'], ['android', 'Android']], plat, (v) => { plat = v; step1(); }, 'Aparelho'),
           h('ol', { style: { margin: 0, paddingLeft: '20px', display: 'grid', gap: '8px', fontSize: '14px' } }, STEPS[plat].map(([t1]) => h('li', { text: t1 }))),
-          h('div', { class: 'note' }, icon('shield', 18), h('span', { text: 'O PACTO não guarda sua biometria. Se perder o celular, os códigos de recuperação (passo 3) devolvem seu acesso.' })),
+          h('div', { class: 'note' }, icon('shield', 18), h('span', { text: 'O PACTOX não guarda sua biometria. Se perder o celular, os códigos de recuperação (passo 3) devolvem seu acesso.' })),
           h('button', { class: 'btn block lime', type: 'button', on: { click: async (e) => {
             e.currentTarget.disabled = true;
             try { en = await api.mfaEnroll(); step2(); } catch (ex) { handleErr(ex); e.target.disabled = false; }
@@ -357,7 +361,7 @@
           try { await api.mfaVerify({ factorId: en.factorId, code: code.value }); S.mfaOn = true; step3(); } catch (ex) { err.textContent = ex.message; ok.disabled = false; code.select(); }
         } } }, icon('check', 18), 'Ativar');
         code.addEventListener('keydown', (e) => { if (e.key === 'Enter') ok.click(); });
-        body.replaceChildren(...head(2, 'Adicione o PACTO ao app', 'Escaneie o QR code com o app autenticador ou digite a chave. Depois, digite o código de 6 dígitos que o app mostrar.'),
+        body.replaceChildren(...head(2, 'Adicione o PACTOX ao app', 'Escaneie o QR code com o app autenticador ou digite a chave. Depois, digite o código de 6 dígitos que o app mostrar.'),
           h('div', { class: 'row wrap', style: { gap: '16px', alignItems: 'center', justifyContent: 'center' } },
             h('img', { src: en.qr, alt: 'QR code para o app autenticador', width: 176, height: 176, style: { background: '#fff', borderRadius: '14px', padding: '8px' } }),
             h('div', { style: { minWidth: '210px', flex: 1 } }, h('div', { class: 'eyebrow', text: 'Chave manual (sem câmera)' }),
@@ -410,7 +414,7 @@
   const tourFirst = () => { const n = String((S.me && S.me.name) || '').replace(/^\s*(\[[^\]]*\]\s*)+/, '').trim(); return n.split(/\s+/)[0] || 'você'; };
   function tourSteps() {
     return [
-      { id: 'welcome', title: `Olá, ${tourFirst()}! Boas-vindas ao PACTO`, text: 'Aqui o combinado tem valor: acordos às claras entre as duas partes. Em menos de um minuto, mostramos onde fica cada coisa.' },
+      { id: 'welcome', title: `Olá, ${tourFirst()}! Boas-vindas ao PACTOX`, text: 'Aqui o combinado tem valor: acordos às claras entre as duas partes. Em menos de um minuto, mostramos onde fica cada coisa.' },
       { id: 'novo', targets: ['.fab', '.side .btn.lime'], icon: 'plus', title: 'Crie um acordo e convide a outra parte', text: 'Defina valor, parcelas e vencimentos e informe o e-mail da outra pessoa. O acordo só vale depois que os dois aceitam.' },
       { id: 'parcelas', targets: ['.tabbar .tab[data-p="calendario"]', '.side .nav-item[data-p="pagamentos"]'], icon: 'calendar', title: 'Parcelas, vencimentos e pagamentos', text: 'No Calendário você vê o que vence e quando; em Pagamentos (no celular, em Mais), cada parcela com o seu status.' },
       { id: 'comprovantes', targets: ['.tabbar .tab[data-p="acordos"]', '.side .nav-item[data-p="acordos"]'], icon: 'clip', title: 'Comprovantes e confirmação', text: 'Pagou? Anexe o comprovante na parcela. Ela fica Em análise até a outra parte confirmar ou pedir correção. Depois de aprovado, não muda mais.' },
@@ -547,7 +551,10 @@
     box.append(...msgs.slice(0, 2).map((m) => h('div', { class: 'mail' }, h('b', null, '📬 E-mail simulado · ' + m.subject), m.body)));
     return box;
   }
+  /* build de homologação com cadastro fechado (PACTO_BUILD.signupClosed): sem a aba "Criar conta"; o bloqueio real é do Supabase Auth */
+  const SIGNUP_CLOSED = !!(REMOTE && window.PACTO_BUILD && window.PACTO_BUILD.signupClosed);
   function authView() {
+    if (SIGNUP_CLOSED && S.authMode === 'signup') S.authMode = 'login';
     const mode = S.authMode;
     const err = h('div', { class: 'err', role: 'alert' });
     const email = h('input', { id: 'au-email', type: 'email', autocomplete: 'email', inputmode: 'email', required: true, placeholder: 'voce@exemplo.com', value: S.authEmail || '' });
@@ -581,7 +588,7 @@
     if (mode === 'signup') fields.push(field('Nome de exibição', name));
     if (mode !== 'newpass') fields.push(field('E-mail', email));
     if (mode === 'reset2') fields.push(field('Código recebido', code));
-    if (mode !== 'reset') fields.push(h('div', { class: 'field' }, h('label', { for: 'au-pw', text: mode === 'reset2' ? 'Nova senha' : 'Senha' }), pwWrap, mode !== 'login' ? h('small', { class: 'hint', text: REMOTE ? 'Mínimo de 10 caracteres, com letras e números. Use uma senha exclusiva para o PACTO.' : 'Mínimo de 10 caracteres, com letras e números. Nunca use uma senha real nesta demonstração.' }) : null));
+    if (mode !== 'reset') fields.push(h('div', { class: 'field' }, h('label', { for: 'au-pw', text: mode === 'reset2' ? 'Nova senha' : 'Senha' }), pwWrap, mode !== 'login' ? h('small', { class: 'hint', text: REMOTE ? 'Mínimo de 10 caracteres, com letras e números. Use uma senha exclusiva para o PACTOX.' : 'Mínimo de 10 caracteres, com letras e números. Nunca use uma senha real nesta demonstração.' }) : null));
     form = h('form', { novalidate: true, on: { submit: onSubmit } }, fields, cap.el, err, submit);
     const titles = { login: ['Entre no seu espaço', 'Acompanhe o que você deve e o que vai receber.'], signup: ['Crie sua conta', 'Uma única conta para comprar e vender.'], reset: ['Recuperar senha', REMOTE ? 'Enviaremos um link seguro para o seu e-mail.' : 'Enviaremos um código para o seu e-mail.'], reset2: ['Nova senha', 'Digite o código e escolha uma senha nova.'], newpass: ['Defina uma nova senha', 'Você abriu o link de recuperação. Escolha a nova senha.'] }[mode] || ['', ''];
     if (mode === 'sent' || mode === 'resetSent') {
@@ -589,13 +596,14 @@
       const msg = isSent ? `Enviamos um link de confirmação para ${S.authEmail}. Abra o e-mail (confira também o spam), toque em “Confirmar” e você entra automaticamente.` : `Se existir uma conta para ${S.authEmail}, enviamos um link para criar uma nova senha. Ele vale por pouco tempo.`;
       const capR = captchaBox();
       const again = h('button', { class: 'btn ghost sm', on: { click: async (e) => { e.target.disabled = true; try { const t = await capR.need(); await (isSent ? api.resendSignup(S.authEmail, t) : api.requestReset(S.authEmail, t)); toast('Enviado de novo.'); } catch (ex) { toast(ex.message, 'err'); } finally { capR.reset(); setTimeout(() => { e.target.disabled = false; }, 60000); } } } }, icon('mail', 16), 'Reenviar');
-      const sentPanel = h('div', { class: 'auth-panel' }, h('span', { class: 'eyebrow' }, 'PACTO 8.2 · ' + ENV_LABEL), h('h2', { text: isSent ? 'Confirme seu e-mail' : 'Confira seu e-mail' }), h('p', { class: 'muted', text: msg }),
+      const sentPanel = h('div', { class: 'auth-panel' }, h('span', { class: 'eyebrow' }, 'PACTOX 8.2 · ' + ENV_LABEL), h('h2', { text: isSent ? 'Confirme seu e-mail' : 'Confira seu e-mail' }), h('p', { class: 'muted', text: msg }),
         capR.el, h('div', { class: 'actions' }, again, h('button', { class: 'link-btn', on: { click: () => { S.authMode = 'login'; render(); } } }, icon('left', 16), 'Voltar ao login')));
       return h('div', { class: 'auth' }, h('div', { class: 'auth-card glass-strong' }, h('div', { class: 'auth-brand' }, logo(40), h('h1', null, 'O combinado tem valor.'), h('p', null, 'Acordos às claras.')), sentPanel));
     }
-    const panel = h('div', { class: 'auth-panel' }, h('span', { class: 'eyebrow' }, REMOTE ? 'PACTO 8.2 · ' + ENV_LABEL : 'PACTO 8.1 · protótipo de testes'), h('h2', { text: titles[0] }), h('p', { class: 'muted', style: { margin: '0 0 18px' }, text: titles[1] }),
+    const panel = h('div', { class: 'auth-panel' }, h('span', { class: 'eyebrow' }, REMOTE ? 'PACTOX 8.2 · ' + ENV_LABEL : 'PACTOX 8.1 · protótipo de testes'), h('h2', { text: titles[0] }), h('p', { class: 'muted', style: { margin: '0 0 18px' }, text: titles[1] }),
       mode === 'login' && S.authNotice ? h('div', { class: 'note ok', role: 'status', style: { margin: '0 0 14px' } }, icon('check', 18), h('span', { text: S.authNotice })) : null,
-      mode === 'login' || mode === 'signup' ? h('div', { style: { marginBottom: '16px' } }, seg([['login', 'Entrar'], ['signup', 'Criar conta']], mode, (v) => { S.authMode = v; render(); }, 'Modo')) : null,
+      SIGNUP_CLOSED ? (mode === 'login' ? h('p', { class: 'small muted', id: 'signup-closed', style: { margin: '0 0 14px' }, text: 'Novos cadastros estão fechados nesta versão de avaliação.' }) : null)
+        : mode === 'login' || mode === 'signup' ? h('div', { style: { marginBottom: '16px' } }, seg([['login', 'Entrar'], ['signup', 'Criar conta']], mode, (v) => { S.authMode = v; render(); }, 'Modo')) : null,
       form,
       h('div', { class: 'row between', style: { marginTop: '12px' } },
         mode === 'login' ? h('button', { class: 'link-btn', on: { click: () => { S.authMode = 'reset'; S.authEmail = email.value; render(); } } }, 'Esqueci minha senha') : h('button', { class: 'link-btn', on: { click: () => { S.authMode = 'login'; render(); } } }, icon('left', 16), 'Voltar ao login')),
@@ -606,7 +614,7 @@
     return h('div', { class: 'auth' }, h('div', { class: 'auth-card glass-strong' },
       h('div', { class: 'auth-brand' }, logo(40), h('h1', null, 'O combinado tem valor.'), h('p', null, 'Acordos às claras: combine parcelas, comprove pagamentos e renegocie com transparência — com a leveza de uma rede social e o rigor de um app financeiro.'),
         h('div', { class: 'auth-feats' }, [['shield', 'Aceite bilateral em cada versão'], ['clip', 'Comprovantes obrigatórios e imutáveis após aprovação'], ['hash', 'Histórico encadeado por SHA-256'], ['layers', 'Unificação e antecipação sem perder a origem']].map(([i, l]) => h('div', { class: 'auth-feat' }, icon(i, 18), l))),
-        h('div', { class: 'rule' }, h('b', null, 'A regra do PACTO'), 'Quem vende sabe quanto vai receber. Quem compra sabe quanto deve. Nenhum acordo muda sem que os dois concordem.')),
+        h('div', { class: 'rule' }, h('b', null, 'A regra do PACTOX'), 'Quem vende sabe quanto vai receber. Quem compra sabe quanto deve. Nenhum acordo muda sem que os dois concordem.')),
       panel));
   }
 
@@ -632,7 +640,7 @@
     const R = S.rec || { stage: 'wait' };
     const card = (...kids) => h('div', { class: 'auth' }, h('div', { class: 'auth-card glass-strong' },
       h('div', { class: 'auth-brand' }, logo(40), h('h1', null, 'O combinado tem valor.'), h('p', null, 'Acordos às claras.')),
-      h('div', { class: 'auth-panel', 'aria-live': 'polite' }, h('span', { class: 'eyebrow' }, 'PACTO 8.2 · ' + ENV_LABEL), ...kids)));
+      h('div', { class: 'auth-panel', 'aria-live': 'polite' }, h('span', { class: 'eyebrow' }, 'PACTOX 8.2 · ' + ENV_LABEL), ...kids)));
     const ico = (name, kind) => h('div', null, h('span', { class: 'ev-ico ' + kind, style: { width: '56px', height: '56px', borderRadius: '18px', margin: '10px 0 4px' } }, icon(name, 28)));
     const busy = (b, on) => { b.disabled = on; b.dataset.label = b.dataset.label || b.textContent; b.textContent = on ? 'Aguarde…' : b.dataset.label; };
     const back = (label, fn) => h('button', { class: 'link-btn', type: 'button', on: { click: fn } }, icon('left', 16), label);
@@ -683,11 +691,11 @@
       h('div', { class: 'field' }, h('label', { for: 'rc-pw', text: 'Nova senha' }), w1), rules,
       h('div', { class: 'field' }, h('label', { for: 'rc-pw2', text: 'Confirme a nova senha' }), w2, match), err, sub);
       return card(ico('key', 'ok'), h('h2', { text: 'Defina uma nova senha' }),
-        h('p', { class: 'muted', style: { margin: '0 0 14px' }, text: `Conta ${maskEmail(R.email)}. Escolha uma senha exclusiva para o PACTO. Você não precisa da senha anterior.` }), form,
+        h('p', { class: 'muted', style: { margin: '0 0 14px' }, text: `Conta ${maskEmail(R.email)}. Escolha uma senha exclusiva para o PACTOX. Você não precisa da senha anterior.` }), form,
         back('Cancelar', async () => { await api.recoveryCancel().catch(() => {}); recLeave(); }));
     }
     if (R.stage === 'done') {
-      const to = h('button', { class: 'btn block lime', type: 'button', on: { click: () => { if (R.email) sessionStorage.setItem('pacto8:prefill', R.email); sessionStorage.setItem('pacto8:notice', 'Senha alterada com sucesso. Entre com a nova senha.'); recLeave(); } } }, icon('right', 18), 'Entrar no PACTO');
+      const to = h('button', { class: 'btn block lime', type: 'button', on: { click: () => { if (R.email) sessionStorage.setItem('pacto8:prefill', R.email); sessionStorage.setItem('pacto8:notice', 'Senha alterada com sucesso. Entre com a nova senha.'); recLeave(); } } }, icon('right', 18), 'Entrar no PACTOX');
       setTimeout(() => to.focus(), 60);
       return card(h('div', null, h('span', { class: 'ev-ico ok', role: 'img', 'aria-label': 'Sucesso', style: { width: '64px', height: '64px', borderRadius: '22px', margin: '10px 0 4px' } }, icon('check', 34))), h('h2', { text: 'Senha alterada com sucesso' }),
         h('p', { class: 'muted', role: 'status', text: 'Sua nova senha já vale. Por segurança, os outros aparelhos conectados foram desconectados. Se você usa verificação em duas etapas, ela continua ativa.' }), to);
@@ -875,7 +883,7 @@
     const hello = welcomePanel(seg([['buyer', `${t('buying')} · ${buyer}`], ['seller', `${t('selling')} · ${seller}`], ...(S.dash && S.dash.hasRecurring ? [['recurring', t('recurring')]] : [])], r, (v) => { S.homeRole = v; sessionStorage.setItem('pacto8:homeRole', v); render(); }, 'Ver como'));
     const left = h('div', null, verifyBanner(), mfaBanner(), hello, h('div', { class: 'section-h', style: { marginTop: '4px' } }, h('h2', null, t('pending')), h('span', { class: 'small muted', text: acts.length ? `${acts.length} ação(ões)` : '' })), stories, hero, stats,
       h('div', { class: 'section-h' }, h('h2', null, r === 'buyer' ? 'Meus acordos' : r === 'recurring' ? 'Contratos recorrentes' : 'Acordos que vendi'), h('button', { class: 'link-btn', on: { click: () => { S.filters.ag = r; go('#/acordos'); } } }, t('seeAll'), icon('right', 16))),
-      mine.length ? h('div', { class: 'hscroll' }, mine.slice(0, 8).map((a) => agCard(a))) : empty('doc', 'Nenhum acordo aqui', r === 'seller' ? 'Cadastre uma venda, serviço ou empréstimo e envie para aceite.' : 'Você ainda não comprou nada pelo PACTO.', r === 'seller' ? h('button', { class: 'btn', on: { click: () => newAgreement() } }, icon('plus', 18), t('newAgreement')) : null));
+      mine.length ? h('div', { class: 'hscroll' }, mine.slice(0, 8).map((a) => agCard(a))) : empty('doc', 'Nenhum acordo aqui', r === 'seller' ? 'Cadastre uma venda, serviço ou empréstimo e envie para aceite.' : 'Você ainda não comprou nada pelo PACTOX.', r === 'seller' ? h('button', { class: 'btn', on: { click: () => newAgreement() } }, icon('plus', 18), t('newAgreement')) : null));
     const right = h('div', { class: 'aside' }, h('div', { class: 'section-h', style: { marginTop: '4px' } }, h('h2', null, t('activity')), h('span', { class: 'pill info' }, icon('hash', 12), 'auditável')),
       feedEls.length ? h('div', { class: 'feed' }, feedEls, feedAll.length > feedN ? h('button', { class: 'btn ghost block', on: { click: () => { S.feedN = feedN + 10; render(); } } }, 'Ver mais atividade') : null) : empty('msg', 'Sem atividade ainda', 'Propostas, aceites e comprovantes aparecem aqui, como num feed.'),
       h('p', { class: 'small muted', style: { margin: '14px 4px' } }, 'Avisos aparecem no app. E-mail e push: não ativos nesta versão.'));
@@ -942,7 +950,7 @@
     const aside = h('div', { class: 'aside' }, h('div', { class: 'card glass' }, h('div', { class: 'eyebrow', style: { marginBottom: '6px' } }, 'Condições vigentes'),
       isRec(a) && a.terms ? recurringAside(a) : plan ? [kv('Modalidade', { none: 'Sem juros', simple: 'Juros simples', price: 'Tabela Price' }[plan.method]), kv('Taxa', U.pct(a.terms.ratePct) + ' a.m.'), kv('Parcelas', `${a.terms.count}× ${money(plan.installmentCents, cur(a))}`), plan.downCents ? kv('Entrada', money(plan.downCents, cur(a))) : null, plan.extrasCents ? kv('Extras', money(plan.extrasCents, cur(a))) : null, kv('Juros totais', money(plan.interestCents, cur(a))), kv('Total contratado', money(plan.grandTotalCents, cur(a))), kv('Previsão de quitação', date(plan.settlementDate)), tt.discount ? kv('Economia com descontos', money(tt.discount, cur(a))) : null]
         : h('p', { class: 'muted small', text: 'Ainda sem condições vigentes — aguardando o primeiro aceite.' })),
-      h('div', { class: 'card glass' }, h('div', { class: 'row' }, h('span', { class: 'ev-ico ok' }, icon('shield', 14)), h('b', null, 'Regra do PACTO')), h('p', { class: 'small muted', style: { margin: '6px 0 0' }, text: 'Nenhuma condição muda sem que as duas partes aceitem exatamente a mesma versão. Parcelas pagas nunca são alteradas.' })));
+      h('div', { class: 'card glass' }, h('div', { class: 'row' }, h('span', { class: 'ev-ico ok' }, icon('shield', 14)), h('b', null, 'Regra do PACTOX')), h('p', { class: 'small muted', style: { margin: '6px 0 0' }, text: 'Nenhuma condição muda sem que as duas partes aceitem exatamente a mesma versão. Parcelas pagas nunca são alteradas.' })));
     return h('div', null, h('button', { class: 'link-btn', style: { marginBottom: '8px' }, on: { click: () => history.length > 1 ? history.back() : go('#/acordos') } }, icon('left', 16), t('back')), h('div', { class: 'detail-grid' }, h('div', null, head, tabBar, body), aside));
   }
   const kv = (k, v) => h('div', { class: 'kv' }, h('span', { text: k }), h('b', { text: v }));
@@ -1097,7 +1105,7 @@
         parts.push(h('details', { class: 'field', open: !!tm.bankRef }, h('summary', { style: { cursor: 'pointer', fontWeight: 700, fontSize: '13px' } }, 'Comparar com taxa bancária (opcional)'),
           h('div', { class: 'form-grid', style: { marginTop: '10px' } }, field('Taxa de referência (% a.m.)', h('input', { type: 'number', step: '0.01', min: '0', max: '10', value: ref.pct, on: { input: (e) => { tm.bankRef = { ...(tm.bankRef || {}), pct: Number(e.target.value) }; emit(); } } })),
             field('Fonte identificada', h('input', { maxlength: '80', placeholder: 'ex.: banco e produto', value: ref.source, on: { input: (e) => { tm.bankRef = { ...(tm.bankRef || {}), source: e.target.value }; emit(); } } }))),
-          h('small', { class: 'hint', text: 'Só comparamos quando você informa a taxa e a fonte. O PACTO não inventa taxas.' })));
+          h('small', { class: 'hint', text: 'Só comparamos quando você informa a taxa e a fonte. O PACTOX não inventa taxas.' })));
       }
       wrap.replaceChildren(...parts);
     };
@@ -1152,7 +1160,7 @@
       reason: '', confirm: false };
     go('#/novo');
   }
-  const BILL_HINT = { installment: 'Produto, bem ou empréstimo dividido em parcelas (com ou sem juros, entrada e extras).', recurring: 'Mensalidade, semanal ou intervalo próprio. O PACTO gera uma cobrança por período — nunca a dívida futura inteira.', single: 'Um atendimento ou serviço com uma única cobrança. Pode virar pacote ou recorrente depois, por um novo acordo.' };
+  const BILL_HINT = { installment: 'Produto, bem ou empréstimo dividido em parcelas (com ou sem juros, entrada e extras).', recurring: 'Mensalidade, semanal ou intervalo próprio. O PACTOX gera uma cobrança por período — nunca a dívida futura inteira.', single: 'Um atendimento ou serviço com uma única cobrança. Pode virar pacote ou recorrente depois, por um novo acordo.' };
   function categoryPicker(w, rerender) {
     const groups = C.CATEGORY_GROUPS;
     const custom = (S.me.prefs.customCategories || []);
@@ -1217,7 +1225,7 @@
       const title = h('input', { id: 'wz-title', maxlength: '80', value: m.title, placeholder: m.billing === 'recurring' ? 'ex.: Treino 3x por semana, Mensalidade de inglês' : m.billing === 'single' ? 'ex.: Manicure + pedicure, Visita técnica' : 'ex.: iPhone 15 Pro, Apartamento 42', on: { input: (e) => (m.title = e.target.value) } });
       const desc = h('textarea', { id: 'wz-desc', maxlength: '600', placeholder: 'Detalhes que ajudam as duas partes (estado, garantia, combinados).', on: { input: (e) => (m.description = e.target.value) } }); desc.value = m.description;
       const buyerInfo = h('div', { class: 'small', style: { minHeight: '20px', marginTop: '-6px', marginBottom: '12px' } });
-      const showBuyer = () => buyerInfo.replaceChildren(w.buyer ? h('span', { class: 'row' }, avatar(w.buyer, 22), h('b', { text: w.buyer.name }), pill('tem conta PACTO', 'ok')) : C.isEmail(w.buyerEmail) ? h('span', { class: 'muted' }, 'Ainda não tem conta: o convite fica guardado e é vinculado quando a pessoa se cadastrar com este e-mail (envio de e-mail simulado).') : '');
+      const showBuyer = () => buyerInfo.replaceChildren(w.buyer ? h('span', { class: 'row' }, avatar(w.buyer, 22), h('b', { text: w.buyer.name }), pill('tem conta PACTOX', 'ok')) : C.isEmail(w.buyerEmail) ? h('span', { class: 'muted' }, 'Ainda não tem conta: o convite fica guardado e é vinculado quando a pessoa se cadastrar com este e-mail (envio de e-mail simulado).') : '');
       let tmr;
       const email = h('input', { id: 'wz-email', type: 'email', inputmode: 'email', value: w.buyerEmail, placeholder: 'cliente@exemplo.com', on: { input: (e) => { w.buyerEmail = e.target.value.trim(); clearTimeout(tmr); tmr = setTimeout(async () => { w.buyer = C.isEmail(w.buyerEmail) ? await api.findUserByEmail(S.token, w.buyerEmail).catch(() => null) : null; showBuyer(); }, 300); } } });
       showBuyer();
@@ -1248,7 +1256,7 @@
         summary = [kv('Tipo', BILL[m.billing]), kv('Total', money(T.totalCents, m.currency)), T.downCents ? kv('Entrada', money(T.downCents, m.currency) + ' em ' + date(T.downDue)) : null, kv(m.billing === 'single' ? 'Cobrança única' : 'Parcelas', m.billing === 'single' ? date(T.firstDue) : `${T.count}× ${p.ok ? money(p.installmentCents, m.currency) : '—'}`), m.billing === 'single' ? null : kv('Juros', p.ok ? `${{ none: 'Sem juros', simple: 'Simples', price: 'Price' }[p.method]} · ${U.pct(T.ratePct)} a.m.` : '—')];
       }
       body = h('div', null, h('div', { class: 'card glass', style: { marginBottom: '12px' } }, h('div', { class: 'row' }, h('span', { class: 'ag-ico' }, icon(U.catIcon(m.category, m.group), 22)), h('div', null, h('b', { text: m.title }), h('div', { class: 'small muted', text: `${m.category || 'Outro'} · para ${who}` }))), summary, fl),
-        m.billing === 'recurring' ? h('div', { class: 'note' }, icon('repeat', 18), 'Nenhuma cobrança futura é lançada de uma vez: o PACTO gera uma por período, enquanto o contrato estiver ativo.') : [h('div', { class: 'eyebrow', style: { margin: '6px 0' } }, 'Cronograma'), schedulePreview(T, m.currency)],
+        m.billing === 'recurring' ? h('div', { class: 'note' }, icon('repeat', 18), 'Nenhuma cobrança futura é lançada de uma vez: o PACTOX gera uma por período, enquanto o contrato estiver ativo.') : [h('div', { class: 'eyebrow', style: { margin: '6px 0' } }, 'Cronograma'), schedulePreview(T, m.currency)],
         h('div', { style: { height: '12px' } }), field('Mensagem', reason),
         h('label', { class: 'row', for: 'wz-ok', style: { alignItems: 'flex-start', fontSize: '14px', cursor: 'pointer' } }, chk, h('span', null, 'Confirmo que os dados são fictícios ou autorizados e que o acordo só vale após o aceite da outra parte.')));
     }
@@ -1601,7 +1609,7 @@
       list.length ? groups.filter((g) => g[1].length).map(([l, items]) => [h('div', { class: 'section-h' }, h('h2', null, l)), h('div', { class: 'stack' }, items.slice(0, 80).map((n) => h('div', { class: ['ntf glass', !n.read && 'unread'] },
         h('span', { class: 'ev-ico ' + (n.type === 'overdue' ? 'danger' : n.type === 'accepted' || n.type === 'settled' ? 'ok' : n.type === 'due' ? 'warn' : ''), style: { width: '34px', height: '34px', borderRadius: '11px' } }, icon(NT_ICON[n.type] || 'bell', 17)),
         h('div', { class: 'body' }, h('div', { class: 't', text: n.title }), h('div', { class: 'd', text: n.body }), n.amountCents ? h('div', { class: 'small', style: { fontWeight: 700 }, text: money(n.amountCents) + (n.due ? ' · vence ' + date(n.due) : '') }) : null,
-          h('div', { class: 'channels' }, n.source === 'assistant' ? pill('Assistente PACTO', 'lime') : null, pill('No app · entregue', 'ok'), pill('E-mail · não ativo', 'muted'), pill('Push · não ativo', 'muted')), h('div', { class: 'small muted', text: U.ago(n.at) })),
+          h('div', { class: 'channels' }, n.source === 'assistant' ? pill('Assistente PACTOX', 'lime') : null, pill('No app · entregue', 'ok'), pill('E-mail · não ativo', 'muted'), pill('Push · não ativo', 'muted')), h('div', { class: 'small muted', text: U.ago(n.at) })),
         n.agreementId || n.consolidationId ? h('button', { class: 'btn ghost sm', on: { click: async () => { await api.markRead(S.token, [n.id]).catch(() => {}); if (n.consolidationId && !n.agreementId) { await refresh(); openConsolidation(n.consolidationId); } else go('#/acordo/' + n.agreementId); } } }, t('open')) : null)))]) : empty('bell', 'Sem notificações', 'Avisos de vencimento, propostas e comprovantes aparecem aqui.'));
   }
 
@@ -1689,7 +1697,7 @@
       h('section', { class: 'card glass' }, h('h2', { style: { margin: '0 0 4px', fontSize: '16px' } }, t('prefs')), h('p', { class: 'small muted', style: { margin: '0 0 6px' }, text: 'Lembretes de vencimento sem duplicidade (um por parcela e janela).' }),
         toggle('7 dias antes do vencimento', prefs.d7, (v) => setPref('d7', v)), toggle('3 dias antes', prefs.d3, (v) => setPref('d3', v)), toggle('No dia do vencimento', prefs.d0, (v) => setPref('d0', v)), toggle('Parcelas em atraso', prefs.overdue, (v) => setPref('overdue', v)),
         toggle('E-mail', false, () => {}, { disabled: true, badge: 'não ativo' }), toggle('Push no celular', false, () => {}, { disabled: true, badge: 'não ativo' }),
-        h('div', { class: 'actions', style: { marginTop: '8px' } }, h('button', { class: 'btn ghost sm', on: { click: () => go('#/assistente') } }, icon('robot', 16), 'Mais ajustes no Assistente PACTO'), h('button', { class: 'btn ghost sm', id: 'tour-replay-perfil', on: { click: () => tourReplay() } }, icon('spark', 16), 'Rever o tour de boas-vindas'))),
+        h('div', { class: 'actions', style: { marginTop: '8px' } }, h('button', { class: 'btn ghost sm', on: { click: () => go('#/assistente') } }, icon('robot', 16), 'Mais ajustes no Assistente PACTOX'), h('button', { class: 'btn ghost sm', id: 'tour-replay-perfil', on: { click: () => tourReplay() } }, icon('spark', 16), 'Rever o tour de boas-vindas'))),
       h('section', { class: 'card glass' }, h('h2', { style: { margin: '0 0 4px', fontSize: '16px' } }, 'Privacidade do contato'),
         toggle('Mostrar meu e-mail para quem tem acordo comigo', !!prefs.shareContact, (v) => setPref('shareContact', v)),
         h('p', { class: 'small muted', style: { margin: '6px 0 0' }, text: 'Desligado por padrão. Ninguém fora dos seus acordos vê seus dados; inadimplência nunca é exibida publicamente.' })),
@@ -1708,7 +1716,8 @@
         h('button', { class: 'btn ghost sm', on: { click: logout } }, icon('logout', 16), t('logout'))) : h('section', { class: 'card glass' }, h('h2', { style: { margin: '0 0 6px', fontSize: '16px' } }, t('demo')), h('p', { class: 'small muted', style: { margin: '0 0 10px' }, text: 'Para testar com dois usuários: abra uma segunda aba (ou janela anônima não funciona: ela não compartilha os dados) e entre com a outra conta. As mudanças aparecem ao vivo nas duas.' }),
         h('div', { class: 'actions' }, Seed.DEMO.filter((d) => d.email !== me.email).map((d) => h('button', { class: 'btn ghost sm', on: { click: () => switchTo(d.email) } }, icon('swap', 16), d.name)), h('button', { class: 'btn danger sm', on: { click: async () => { if (!confirm('Apagar todos os dados locais e recriar a demonstração?')) return; await api.resetAll(); sessionStorage.clear(); location.hash = ''; location.reload(); } } }, icon('refresh', 16), 'Reiniciar demonstração')),
         h('button', { class: 'btn ghost sm', style: { marginTop: '10px' }, on: { click: logout } }, icon('logout', 16), t('logout'))),
-      h('p', { class: 'small muted', style: { textAlign: 'center' }, text: (REMOTE ? 'PACTO 8.2 · ' + ENV_LABEL + ' · O combinado tem valor. · servidor Supabase.' : 'PACTO 8.1 (sobre a base 8.0) · O combinado tem valor. · protótipo local (sem servidor).') + ' Quem vende sabe quanto vai receber. Quem compra sabe quanto deve. Nenhum acordo muda sem que os dois concordem.' }));
+      h('p', { class: 'app-build', id: 'app-build', text: 'Versão ' + ((window.PACTO_BUILD && window.PACTO_BUILD.version) || 'dev') + ' · powered by HINGABEXIT' }),
+      h('p', { class: 'small muted', style: { textAlign: 'center' }, text: (REMOTE ? 'PACTOX 8.2 · ' + ENV_LABEL + ' · O combinado tem valor. · servidor Supabase.' : 'PACTOX 8.1 (sobre a base 8.0) · O combinado tem valor. · protótipo local (sem servidor).') + ' Quem vende sabe quanto vai receber. Quem compra sabe quanto deve. Nenhum acordo muda sem que os dois concordem.' }));
   }
 
   /* =====================================================================
@@ -1943,7 +1952,7 @@
       view = ds.length ? h('div', { class: 'stack' }, ds.map((d) => h('div', null, h('div', { class: 'section-h' }, h('h2', null, date(d) + (d === td ? ' · hoje' : ''))), h('div', { class: 'stack' }, byDay[d].map(calCard))))) : empty('calendar', 'Sem vencimentos neste mês', 'Navegue entre os meses ou mude o filtro.');
     }
     return h('div', null, toolbar, chips, legend, totals, view,
-      h('p', { class: 'small muted', style: { margin: '14px 4px' } }, icon('lock', 13), ' Só aparecem contratos dos quais você é parte. Nada do calendário é público — e o PACTO nunca expõe quem está em atraso.'));
+      h('p', { class: 'small muted', style: { margin: '14px 4px' } }, icon('lock', 13), ' Só aparecem contratos dos quais você é parte. Nada do calendário é público — e o PACTOX nunca expõe quem está em atraso.'));
   }
 
   /* ---------- Central de clientes ---------- */
@@ -2019,7 +2028,7 @@
     const selFrom = h('select', { 'aria-label': 'Início do horário', on: { change: (e) => save({ hourFrom: Number(e.target.value), hourTo: p.hourTo }) } }, hours.slice(0, 24).map((x) => h('option', { value: String(x), selected: x === p.hourFrom, text: String(x).padStart(2, '0') + 'h' })));
     const selTo = h('select', { 'aria-label': 'Fim do horário', on: { change: (e) => save({ hourFrom: p.hourFrom, hourTo: Number(e.target.value) }) } }, hours.slice(1).map((x) => h('option', { value: String(x), selected: x === p.hourTo, text: String(x).padStart(2, '0') + 'h' })));
     return h('div', { class: 'stack', style: { maxWidth: '820px' } },
-      h('section', { class: 'hero assistant-hero' }, h('div', { class: 'row' }, h('span', { class: 'assist-orb', 'aria-hidden': 'true' }, icon('robot', 26)), h('div', null, h('div', { class: 'eyebrow' }, 'Assistente PACTO'), h('div', { class: 'big', style: { fontSize: '24px' } }, p.enabled === false ? 'Desligado' : paused ? 'Pausado até ' + dateShort(p.pausedUntil) : 'Lembrando por você'))),
+      h('section', { class: 'hero assistant-hero' }, h('div', { class: 'row' }, h('span', { class: 'assist-orb', 'aria-hidden': 'true' }, icon('robot', 26)), h('div', null, h('div', { class: 'eyebrow' }, 'Assistente PACTOX'), h('div', { class: 'big', style: { fontSize: '24px' } }, p.enabled === false ? 'Desligado' : paused ? 'Pausado até ' + dateShort(p.pausedUntil) : 'Lembrando por você'))),
         h('div', { class: 'when', text: 'Avisa antes do vencimento, no dia e em caso de atraso. Fica em silêncio enquanto um comprovante ou uma justificativa estiver em análise e para quando o pagamento é confirmado. Nunca envia o mesmo aviso duas vezes.' }),
         h('div', { class: 'hero-meta' }, h('span', { class: 'hero-chip' }, icon('bell', 14), 'No app: ativo'), h('span', { class: 'hero-chip' }, icon('mail', 14), 'E-mail: não ativo'), h('span', { class: 'hero-chip' }, icon('phone', 14), 'Push/WhatsApp: não ativo'))),
       h('section', { class: 'card glass' }, h('h2', { style: { margin: '0 0 10px', fontSize: '16px' } }, 'Configurações'),
@@ -2039,7 +2048,18 @@
   function morePage() {
     const acts = pendingActions().length, nu = unread();
     const items = [['pagamentos', 'wallet', t('payments'), 'Parcelas e comprovantes'], ['clientes', 'users', t('clients'), 'Agenda de quem compra de você'], ['assistente', 'robot', 'Assistente', 'Lembretes e preferências'], ['projecoes', 'chart', t('projections'), 'Contratado, pago e previsto'], ['notificacoes', 'bell', t('notifications'), nu ? `${nu} não lida(s)` : 'Histórico de avisos'], ['unificar', 'layers', 'Unificar dívidas', 'Some saldos sem perder a origem'], ['negociacoes', 'handshake', t('negotiations'), acts ? `${acts} pendência(s)` : 'Propostas e respostas'], ['perfil', 'user', t('profile'), 'Conta, segurança e demonstração']];
-    return h('div', { class: 'more-grid' }, items.map(([p, ic, l, d]) => h('button', { class: 'more-tile glass lift sheen', on: { click: () => go('#/' + p) } }, h('span', { class: 'ag-ico' }, icon(ic, 22)), h('b', { text: l }), h('span', { class: 'small muted', text: d }))));
+    if (EMP && EMP.moreItems) items.unshift(...EMP.moreItems());
+    if (STUDIO && STUDIO.founder) items.unshift(['studio/visao', 'spark', 'PX CORE', 'Central do fundador']);
+    const grid = h('div', { class: 'more-grid' }, items.map(([p, ic, l, d]) => h('button', { class: 'more-tile glass lift sheen', on: { click: () => go('#/' + p) } }, h('span', { class: 'ag-ico' }, icon(ic, 22)), h('b', { text: l }), h('span', { class: 'small muted', text: d }))));
+    if (!REMOTE) return grid;
+    /* versão intermediária de homologação: o que ainda está em desenvolvimento aparece desativado e marcado, nunca como pronto */
+    const dev = [['spark', 'PX AURA', 'Experiência visual · Assinatura HINGABEXIT e Temas Especiais']];
+    if (!(STUDIO && STUDIO.founder)) dev.push(['shield', 'PX CORE', 'Central do fundador · indisponível nesta versão']);
+    if (!(EMP && EMP.enabled)) dev.push(['users', 'PX PRO', 'Gestão de negócios · ainda não liberado aqui']);
+    dev.push(['mail', 'PX LINK', 'Convites e conexões'], ['handshake', 'Acordo iniciado por qualquer parte', 'Comprador ou vendedor propõe']);
+    return h('div', { class: 'stack' }, grid,
+      h('section', { class: 'dev-section', 'aria-label': 'Em desenvolvimento' }, h('div', { class: 'section-h' }, h('h2', { style: { fontSize: '14px' } }, 'Em desenvolvimento'), h('span', { class: 'dev-tag', text: 'ainda não disponível' })),
+        h('div', { class: 'more-grid' }, dev.map(([ic, l, d]) => h('div', { class: 'more-tile glass is-dev', 'aria-disabled': 'true' }, h('span', { class: 'ag-ico' }, icon(ic, 22)), h('b', null, l, ' ', h('span', { class: 'dev-tag', text: 'Em desenvolvimento' })), h('span', { class: 'small muted', text: d }))))));
   }
   function categoriesCard() {
     const list = S.me.prefs.customCategories || [];
@@ -2057,8 +2077,16 @@
     const r = route(), y = window.scrollY;
     let title, sub, content, fab;
     const nb = () => ({ label: t('newAgreement'), onClick: newAgreement });
-    switch (r.page) {
-      case 'inicio': title = t('home'); sub = 'PACTO · ' + t('tagline'); content = homePage(); fab = nb(); break;
+    if (r.page === 'orcamento' && EMP && EMP.enabled && !(EMP.handles && EMP.handles('orcamento'))) {
+      if (EMP.enterEmpresas && EMP.enterEmpresas()) { /* cai no handles abaixo */ }
+      else { location.hash = '#/experiencia'; return; }
+    }
+    if (EMP && EMP.handles && EMP.handles(r.page)) {
+      const ep = EMP.page(r.page, r.id);
+      title = ep.title; sub = ep.sub; content = ep.content;
+      if (ep.bare) { const root2 = $root(); root2.replaceChildren(content); document.title = title + ' · PACTOX'; return; }
+    } else switch (r.page) {
+      case 'inicio': title = t('home'); sub = 'PACTOX · ' + t('tagline'); content = homePage(); fab = nb(); break;
       case 'acordos': title = t('agreements'); sub = `${S.ags.length} acordo(s) · agrupados por contrato`; content = agreementsPage(); fab = nb(); break;
       case 'acordo': { const a = findAg(r.id); title = a ? a.title : t('agreements'); sub = a ? `${role(a) === 'seller' ? 'Você vende para' : 'Você compra de'} ${other(a).name}` : ''; content = detailPage(r.id, r.sub); break; }
       case 'novo': if (!S.wiz) { newAgreement(); return; } /* carga/recarga direta de #/novo: cria o rascunho e desenha uma única vez */ title = t('newAgreement'); sub = 'Identificação · condições · revisão'; content = wizardPage(); break;
@@ -2067,17 +2095,19 @@
       case 'unificar': title = 'Unificar dívidas'; sub = 'Some saldos abertos sem perder a origem'; content = unifyPage(); break;
       case 'projecoes': title = t('projections'); sub = 'Contratado, pago, pendente e previsões'; content = projectionsPage(); break;
       case 'notificacoes': title = t('notifications'); sub = `${unread()} não lida(s)`; content = notificationsPage(); break;
-      case 'perfil': title = t('profile'); sub = S.me.email; content = profilePage(); break;
+      case 'perfil': { title = t('profile'); sub = S.me.email; content = profilePage(); const pc = STUDIO && STUDIO.profileCard && STUDIO.profileCard(); if (pc && content && content.insertBefore) content.insertBefore(pc, content.lastChild); break; }
+      case 'agenda': /* fora do PX PRO: mesma tela do calendário 8.2 (não redireciona para #/inicio) */
       case 'calendario': title = 'Calendário'; sub = 'Vencimentos dos seus acordos · só você e a outra parte veem'; content = calendarPage(); break;
       case 'clientes': title = t('clients'); sub = 'Quem compra de você, como numa agenda de contatos'; content = clientsPage(); break;
       case 'cliente': { const p = person(r.id); title = p.name || t('clients'); sub = 'Ficha do cliente'; content = clientPage(r.id, r.sub); break; }
-      case 'assistente': title = 'Assistente PACTO'; sub = 'Lembretes internos, sem duplicidade'; content = assistantPage(); break;
-      case 'mais': title = t('more'); sub = 'Todas as áreas do PACTO'; content = morePage(); break;
+      case 'assistente': title = 'Assistente PACTOX'; sub = 'Lembretes internos, sem duplicidade'; content = assistantPage(); break;
+      case 'studio': { if (!STUDIO || !STUDIO.founder) { location.hash = '#/inicio'; return; } const sp = STUDIO.page(r.id); title = sp.title; sub = sp.sub; content = sp.content; break; }
+      case 'mais': title = t('more'); sub = 'Todas as áreas do PACTOX'; content = morePage(); break;
       default: location.hash = '#/inicio'; return;
     }
     const prev = root.dataset.route; root.dataset.route = location.hash;
     root.replaceChildren(shell(title, sub, content, { fab }));
-    document.title = `${title} · PACTO`;
+    document.title = `${title} · PACTOX`;
     if (prev === location.hash) window.scrollTo(0, y); else window.scrollTo(0, 0);
   }
   addEventListener('hashchange', () => { closeSheet(true); S.menu = false; render(); });
@@ -2094,7 +2124,7 @@
   }
   async function boot() {
     window.__splashT0 = performance.now();
-    if (!(window.crypto && crypto.subtle)) { $root().replaceChildren(h('div', { class: 'auth' }, h('div', { class: 'card glass', style: { maxWidth: '480px' } }, h('h2', null, 'Abra via http://localhost ou https'), h('p', null, 'O PACTO usa WebCrypto (PBKDF2, SHA-256), que o navegador só libera em contexto seguro. Rode “npx serve” ou “python3 -m http.server” na pasta do app.')))); return; }
+    if (!(window.crypto && crypto.subtle)) { $root().replaceChildren(h('div', { class: 'auth' }, h('div', { class: 'card glass', style: { maxWidth: '480px' } }, h('h2', null, 'Abra via http://localhost ou https'), h('p', null, 'O PACTOX usa WebCrypto (PBKDF2, SHA-256), que o navegador só libera em contexto seguro. Rode “npx serve” ou “python3 -m http.server” na pasta do app.')))); return; }
     if (REMOTE) {
       api.onAuthEvent((ev) => {
         if (ev === 'PASSWORD_RECOVERY') recStart();
@@ -2129,5 +2159,10 @@
     } else render();
     setInterval(() => { if (S.token && !S.locked) api.runReminders(S.token).then((n) => { if (n) refresh(); }).catch(() => {}); }, 5 * 60000);
   }
+  /* PACTO Studio (Etapa 1, WIP local): o servidor decide quem é fundador; sem servidor/flag, nada aparece. */
+  const STUDIO = window.PactoStudio || null;
+  if (STUDIO) STUDIO.init({ render: () => render(), go, api: REMOTE ? api : null }); // item 3: no modo supabase o Studio fala com a pacto-api real
+  const EMP = window.PactoEmpresas || null;
+  if (EMP) EMP.init({ render: () => render(), go, api: REMOTE ? api : null, me: () => S.me });
   boot().then(hideSplash, (e) => { hideSplash(); console.error(e); toast('Falha ao iniciar: ' + e.message, 'err'); });
 })();

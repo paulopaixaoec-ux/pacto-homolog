@@ -148,7 +148,7 @@
       delete s.codes[k];
     }
     function claimInvites(s, user) {
-      s.agreements.forEach((a) => { if (!a.buyerId && a.buyerEmail === user.email && a.sellerId !== user.id) { a.buyerId = user.id; a.buyerEmail = null; notify(s, a.sellerId, { type: 'joined', title: 'Comprador entrou no PACTO', body: `${user.name} agora pode responder a “${a.title}”.`, agreementId: a.id }); notify(s, user.id, { type: 'proposal', title: 'Você tem uma proposta de acordo', body: `“${a.title}” aguarda sua resposta.`, agreementId: a.id, key: 'claim:' + a.id }); } });
+      s.agreements.forEach((a) => { if (!a.buyerId && a.buyerEmail === user.email && a.sellerId !== user.id) { a.buyerId = user.id; a.buyerEmail = null; notify(s, a.sellerId, { type: 'joined', title: 'Comprador entrou no PACTOX', body: `${user.name} agora pode responder a “${a.title}”.`, agreementId: a.id }); notify(s, user.id, { type: 'proposal', title: 'Você tem uma proposta de acordo', body: `“${a.title}” aguarda sua resposta.`, agreementId: a.id, key: 'claim:' + a.id }); } });
     }
     function limiter(s, email) {
       const a = s.attempts[email] || { fails: 0, until: 0 };
@@ -180,7 +180,7 @@
           const user = { id: uid('usr'), email, name, handle: email.split('@')[0].replace(/[^a-z0-9._]/g, '').slice(0, 20), photo: '', lang: 'pt-BR', theme: 'auto', prefs: { ...DEFAULT_PREFS, autoLockMin: idleDefaultMin }, pwd: { algo: 'PBKDF2-SHA256', iterations, salt, hash }, emailVerified: !!verified, createdAt: at(), demo };
           s.users.push(user);
           let code = null;
-          if (!verified) { code = await issueCode(s, 'verify', email); mail(s, email, 'Confirme seu e-mail no PACTO', `Seu código de verificação é ${code}. Ele expira em 30 minutos.`); }
+          if (!verified) { code = await issueCode(s, 'verify', email); mail(s, email, 'Confirme seu e-mail no PACTOX', `Seu código de verificação é ${code}. Ele expira em 30 minutos.`); }
           else claimInvites(s, user);
           await log(s, 'account.created', user.id, null, { name });
           const token = await newSession(s, user);
@@ -222,10 +222,10 @@
       async listSessions(token) { return read(async (s) => { const { user, key } = await session(s, token); return Object.entries(s.sessions).filter(([, v]) => v.userId === user.id).map(([k, v]) => ({ current: k === key, createdAt: v.createdAt, lastSeen: v.lastSeen, expiresAt: v.expiresAt, ua: v.ua })); }); },
       async revokeOtherSessions(token) { return authed(token, async (s, u, { key }) => { Object.keys(s.sessions).forEach((k) => { if (k !== key && s.sessions[k].userId === u.id) delete s.sessions[k]; }); await log(s, 'auth.sessions_revoked', u.id, null, {}); return true; }); },
       async verifyEmail(token, code) { return authed(token, async (s, u) => { if (u.emailVerified) return true; await checkCode(s, 'verify', u.email, code); u.emailVerified = true; claimInvites(s, u); await log(s, 'account.email_verified', u.id, null, {}); return true; }); },
-      async resendVerification(token) { return authed(token, async (s, u) => { const code = await issueCode(s, 'verify', u.email); mail(s, u.email, 'Novo código PACTO', `Seu código de verificação é ${code}.`); return true; }); },
+      async resendVerification(token) { return authed(token, async (s, u) => { const code = await issueCode(s, 'verify', u.email); mail(s, u.email, 'Novo código PACTOX', `Seu código de verificação é ${code}.`); return true; }); },
       async requestReset(email) {
         email = normEmail(email);
-        return mutate(async (s) => { limiter(s, 'reset:' + email); registerFail(s, 'reset:' + email); if (s.users.some((u) => u.email === email)) { const code = await issueCode(s, 'reset', email); mail(s, email, 'Recuperação de senha PACTO', `Use o código ${code} para criar uma nova senha. Se não foi você, ignore.`); } return true; /* resposta idêntica exista ou não a conta */ });
+        return mutate(async (s) => { limiter(s, 'reset:' + email); registerFail(s, 'reset:' + email); if (s.users.some((u) => u.email === email)) { const code = await issueCode(s, 'reset', email); mail(s, email, 'Recuperação de senha PACTOX', `Use o código ${code} para criar uma nova senha. Se não foi você, ignore.`); } return true; /* resposta idêntica exista ou não a conta */ });
       },
       async resetPassword({ email, code, password }) {
         email = normEmail(email);
@@ -301,7 +301,7 @@
             if (!origin) fail('NOT_FOUND', 'Acordo de origem não encontrado.');
             C.assertParty(origin, u.id);
             if (origin.sellerId !== u.id) fail('FORBIDDEN', 'Só quem presta o serviço converte o acordo.');
-            if (!origin.buyerId) fail('CONFLICT', 'O cliente do acordo de origem ainda não entrou no PACTO.');
+            if (!origin.buyerId) fail('CONFLICT', 'O cliente do acordo de origem ainda não entrou no PACTOX.');
             if (!buyerEmail) buyerEmail = s.users.find((x) => x.id === origin.buyerId).email;
             else if (normEmail(buyerEmail) !== s.users.find((x) => x.id === origin.buyerId).email) fail('VALIDATION', 'A conversão é feita com o mesmo cliente do acordo de origem.');
           }
@@ -312,7 +312,7 @@
           s.agreements.unshift(ag);
           await log(s, 'agreement.proposed', u.id, ag.id, { version: 1, title: ag.title, billing: ag.billing, totalCents: t.totalCents || t.amountCents, count: t.count || 0, termsHash, fromAgreementId: ag.fromAgreementId || null });
           if (buyer) { notify(s, buyer.id, { type: 'proposal', title: 'Nova proposta de acordo', body: `${u.name} propôs “${ag.title}” · versão 1.`, agreementId: ag.id, amountCents: t.totalCents || t.amountCents }); emit(s, 'negotiation.created', { recipientId: buyer.id, agreementId: ag.id, data: { version: 1, billing: ag.billing } }); }
-          else mail(s, e, 'Você recebeu uma proposta no PACTO', `${u.name} propôs um acordo: ${ag.title}. Crie sua conta com este e-mail para responder.`);
+          else mail(s, e, 'Você recebeu uma proposta no PACTOX', `${u.name} propôs um acordo: ${ag.title}. Crie sua conta com este e-mail para responder.`);
           return ag;
         });
       },

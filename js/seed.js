@@ -13,7 +13,7 @@
   /** Gera um PDF válido e mínimo com o texto informado (comprovante fictício). */
   function fakePdf(text) {
     const safe = String(text).replace(/[()\\]/g, '');
-    const stream = `BT /F1 14 Tf 40 760 Td (COMPROVANTE FICTICIO - PACTO DEMO) Tj 0 -24 Td /F1 11 Tf (${safe}) Tj 0 -18 Td (Documento sem valor legal, gerado para testes.) Tj ET`;
+    const stream = `BT /F1 14 Tf 40 760 Td (COMPROVANTE FICTICIO - PACTOX DEMO) Tj 0 -24 Td /F1 11 Tf (${safe}) Tj 0 -18 Td (Documento sem valor legal, gerado para testes.) Tj ET`;
     const objs = ['<< /Type /Catalog /Pages 2 0 R >>', '<< /Type /Pages /Kids [3 0 R] /Count 1 >>', '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>', '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>', `<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`];
     let out = '%PDF-1.4\n'; const offs = [];
     objs.forEach((o, i) => { offs.push(out.length); out += `${i + 1} 0 obj\n${o}\nendobj\n`; });

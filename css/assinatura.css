@@ -1,0 +1,50 @@
+/* PACTOX · Assinatura Visual HINGABEXIT v2.2.0 no app (gerado por tools/sync-assinatura.py; não editar à mão).
+   Tudo aqui só vale quando o runtime (js/hingabexit.js) pôs data-hb-palette / data-hb-mode no elemento: o tema pessoal do fundador e a prévia do PX CORE.
+   Sem isso o app fica exatamente como era. Modo claro: nenhuma regra alterada (as camadas v2.2 são só do escuro). */
+html[data-hb-palette] .ambient { background: radial-gradient(1200px 700px at 10% -10%, var(--hb-ambient-1) 0, transparent 60%), radial-gradient(900px 600px at 110% 10%, var(--hb-ambient-2) 0, transparent 55%), var(--offwhite); }
+html[data-hb-palette] .blob { filter: blur(var(--hb-orb-blur, 70px)); opacity: var(--hb-blob-1-opacity, .55); }
+html[data-hb-palette] .blob.b1 { background: radial-gradient(circle at 30% 30%, var(--hb-orb-1a), var(--hb-orb-1b) 60%, transparent 70%); }
+html[data-hb-palette] .blob.b2 { background: radial-gradient(circle, var(--hb-orb-2a) 0, var(--hb-orb-2b) 40%, transparent 70%); opacity: var(--hb-blob-2-opacity, .35); }
+html[data-hb-palette] .blob.b3 { background: radial-gradient(circle, var(--hb-orb-3a), var(--hb-orb-3b) 55%, transparent 70%); opacity: var(--hb-blob-3-opacity, .4); }
+html[data-hb-palette] .st-orb { opacity: .55; }
+html[data-hb-adapt~="weak"] .blob, html[data-hb-adapt~="reduced-transparency"] .blob { filter: none; opacity: .18; }
+/* botões, pílulas e indicadores no tom da paleta (o app chamava de "lime" por história; aqui é o destaque da paleta) */
+html[data-hb-palette] .btn.lime, html[data-hb-palette] .tour-next { background: linear-gradient(160deg, color-mix(in srgb, var(--action) 88%, #fff), var(--action)); color: var(--action-ink); box-shadow: 0 10px 22px -12px color-mix(in srgb, var(--action) 80%, transparent), inset 0 1px 0 rgba(255,255,255,.28); }
+html[data-hb-palette] .fab { background: linear-gradient(160deg, color-mix(in srgb, var(--action) 88%, #fff), var(--action)); color: var(--action-ink); box-shadow: 0 14px 30px -10px color-mix(in srgb, var(--action) 70%, transparent), inset 0 1px 0 rgba(255,255,255,.28); }
+[data-hb-palette] .cl-cat.rec { background: color-mix(in srgb, var(--lime) 35%, transparent); }
+[data-hb-palette] .tour-spot { box-shadow: 0 0 0 9999px rgba(4, 22, 20, .42), 0 0 0 2px var(--lime-strong), 0 0 0 7px color-mix(in srgb, var(--lime-strong) 28%, transparent); }
+[data-hb-palette] .assist-orb { background: radial-gradient(circle at 30% 25%, color-mix(in srgb, var(--lime) 40%, #fff), var(--lime)); }
+[data-hb-palette] .story-ring { background: conic-gradient(from 210deg, var(--lime-strong), var(--petrol-500), var(--brand-mint), var(--lime-strong)); }
+/* camadas do modo escuro v2.2 (Liquid Glass em camadas) */
+[data-hb-mode="dark"] .hb-glass,
+[data-hb-mode="dark"] .glass,
+[data-hb-mode="dark"] .hb-card {
+    background:
+    radial-gradient(120% 90% at 0% 0%, rgba(255, 255, 255, .075), transparent 58%),
+    radial-gradient(90% 70% at 100% 100%, color-mix(in srgb, var(--brand-petrol) 9%, transparent), transparent 62%),
+    linear-gradient(145deg, var(--glass-2), var(--glass) 55%);
+}
+[data-hb-mode="dark"] .hb-glass::before,
+[data-hb-mode="dark"] .glass::before,
+[data-hb-mode="dark"] .hb-card::before {
+    background: linear-gradient(160deg, rgba(255, 255, 255, .34), rgba(255, 255, 255, .06) 36%, rgba(255, 255, 255, 0) 58%, rgba(255, 255, 255, .15) 100%);
+}
+[data-hb-mode="dark"] .sheen::after {
+  background: linear-gradient(115deg, transparent 30%, rgba(255, 255, 255, .22) 45%, transparent 60%);
+  background-size: 250% 100%;
+  background-position: 120% 0;
+}
+[data-hb-mode="dark"] .ambient::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(70vmax 50vmax at 85% 105%, color-mix(in srgb, var(--hb-orb-1b) 22%, transparent), transparent 70%),
+    radial-gradient(60vmax 40vmax at -5% 55%, color-mix(in srgb, var(--hb-orb-3b) 16%, transparent), transparent 70%);
+}
+[data-hb-adapt~="weak"] .ambient::after,
+[data-hb-adapt~="reduced-transparency"] .ambient::after { display: none; }
+@media (prefers-reduced-transparency: reduce) {
+[data-hb-mode="dark"] .ambient::after { display: none; }
+}

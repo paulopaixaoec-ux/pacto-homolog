@@ -290,7 +290,7 @@
     async function freshSession(minLeftSec = 60) {
       return recoverSession(minLeftSec);
     }
-    async function invoke(method, args) {
+    async function invoke(method, args, { noStepUp = false } = {}) {
       if (LT && isLocked()) throw lockedErr();
       try { return await invokeOnce(method, args); }
       catch (e0) {
@@ -306,7 +306,7 @@
             throw new PactoError('UNAUTHENTICATED', 'Sua sessão terminou. Entre novamente.');
           }
         }
-        if (e && e.code === 'MFA_REQUIRED' && stepUpHandler) {
+        if (e && e.code === 'MFA_REQUIRED' && stepUpHandler && !noStepUp) {
           const ok = await stepUpHandler(); // reautenticação forte (hoje TOTP; passkey depois) e repete UMA vez
           if (ok) return invokeOnce(method, args);
         }
@@ -498,6 +498,17 @@
       },
       /* ---------- verificação em duas etapas (Supabase Auth MFA · TOTP) ---------- */
       onStepUp(fn) { stepUpHandler = fn; },
+      /* item 3 · PX CORE (antigo Studio): studio.* pela pacto-api com o token da sessão. Devolve { status, body } (o Studio desenha
+         a resposta; quem decide fundador/MFA/flag é o servidor). Sem repetição automática por MFA: o Studio pede o código na própria tela. */
+      async studio(method, opts) {
+        if (!/^studio\.[a-z][a-zA-Z._]*$/.test(String(method || ''))) return { status: 400, body: { error: { code: 'BAD_METHOD', message: 'Operação não permitida.' } } };
+        try { return { status: 200, body: { result: await invoke(method, [opts || {}], { noStepUp: true }) } }; }
+        catch (e) { return { status: (e && e.httpStatus) || 0, body: { error: { code: (e && e.code) || 'SERVER', message: (e && e.message) || 'Falha' } } }; }
+      },
+      /* item 5 · PX PRO / either.* : mesma porta da pacto-api. Lançam PactoError (404 quando a flag está desligada). */
+      async ws(method, opts) { return invoke(method, [opts || {}]); },
+      async px(method, opts) { return invoke(method, [opts || {}]); },
+      async either(method, opts) { return invoke(method, [opts || {}]); },
       async mfaStatus() {
         const { data, error } = await sb.auth.mfa.listFactors(); if (error) throw authErr(error);
         const lvl = await sb.auth.mfa.getAuthenticatorAssuranceLevel();
@@ -508,7 +519,7 @@
         // limpa tentativas de cadastro não concluídas deste usuário (fatores não verificados)
         const ls = await sb.auth.mfa.listFactors();
         for (const f of ((ls.data && ls.data.all) || []).filter((x) => x.status !== 'verified')) { try { await sb.auth.mfa.unenroll({ factorId: f.id }); } catch {} }
-        const { data, error } = await sb.auth.mfa.enroll({ factorType: 'totp', friendlyName: 'PACTO ' + new Date().toISOString().slice(0, 10) });
+        const { data, error } = await sb.auth.mfa.enroll({ factorType: 'totp', friendlyName: 'PACTOX ' + new Date().toISOString().slice(0, 10) });
         if (error) throw authErr(error);
         return { factorId: data.id, qr: data.totp.qr_code, secret: data.totp.secret, uri: data.totp.uri };
       },

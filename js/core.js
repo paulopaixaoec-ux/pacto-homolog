@@ -258,7 +258,7 @@
   function proposeVersion(ag, { userId, terms, reason, at, termsHash }) {
     assertParty(ag, userId);
     if (!['proposed', 'active', 'refused'].includes(ag.status)) fail('CONFLICT', 'Este acordo não aceita novas propostas.');
-    if (!ag.buyerId) fail('CONFLICT', 'O comprador ainda não entrou no PACTO.');
+    if (!ag.buyerId) fail('CONFLICT', 'O comprador ainda não entrou no PACTOX.');
     canRenegotiate(ag);
     const pend = pendingVersion(ag);
     let kind = 'proposal';
@@ -556,7 +556,7 @@
 
 
   /* =====================================================================
-   * PACTO 8.1 — categorias, modalidades de cobrança, recorrência,
+   * PACTOX 8.1 — categorias, modalidades de cobrança, recorrência,
    * justificativa de atraso, Assistente, calendário, clientes, painéis.
    * ===================================================================== */
   const BILLING = ['installment', 'recurring', 'single'];
@@ -733,7 +733,7 @@
     s.delayId = null;
   }
 
-  /* ---------- Assistente PACTO: preferências e regras ---------- */
+  /* ---------- Assistente PACTOX: preferências e regras ---------- */
   const ASSISTANT_DEFAULTS = { enabled: true, pausedUntil: null, leadDays: 7, d7: true, d3: true, d0: true, overdue: true, overdueEveryDays: 3, hourFrom: 8, hourTo: 20, muted: [] };
   function cleanAssistant(p, base) {
     const a = { ...ASSISTANT_DEFAULTS, ...(base || {}) };

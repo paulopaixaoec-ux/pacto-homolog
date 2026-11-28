@@ -844,3 +844,16 @@ select { height: 40px; padding: 0 10px; border-radius: 12px; border: 1px solid v
   .auth .auth-card.glass-strong, .lockscreen .lock-card.glass-strong { background: #F3F7F4; }
   .auth-brand { background: #0B4D3E; }
 }
+
+/* PWA · aviso discreto de nova versão (js/pwa.js) */
+.pwa-update { position: fixed; left: 50%; transform: translateX(-50%); top: calc(10px + env(safe-area-inset-top, 0px)); z-index: 9000; display: flex; align-items: center; gap: 10px; padding: 9px 10px 9px 14px; border-radius: 999px; font-size: 13.5px; color: var(--ink); box-shadow: 0 10px 30px rgba(0,0,0,.18); max-width: calc(100vw - 24px); }
+.pwa-update-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--brand-petrol, #0B4D3E); flex: none; }
+.pwa-update-txt { font-weight: 600; white-space: nowrap; }
+.pwa-update-btn { border: 0; border-radius: 999px; padding: 7px 14px; font: inherit; font-weight: 700; cursor: pointer; background: var(--brand-petrol, #0B4D3E); color: #fff; }
+.pwa-update-btn:disabled { opacity: .7; }
+.pwa-update-x { border: 0; background: transparent; color: var(--ink-2); font-size: 20px; line-height: 1; cursor: pointer; padding: 2px 6px; }
+@media (min-width: 900px) { .pwa-update { top: 16px; } }
+/* recursos em desenvolvimento: marcação discreta, nunca como concluído */
+.dev-tag { display: inline-block; font-size: 10.5px; font-weight: 700; letter-spacing: .02em; padding: 2px 7px; border-radius: 999px; background: rgba(127,127,127,.14); color: var(--ink-2); vertical-align: middle; }
+.more-tile.is-dev { opacity: .62; cursor: default; }
+.app-build { font-size: 11.5px; color: var(--ink-2); text-align: center; margin: 4px 0 0; letter-spacing: .01em; }
