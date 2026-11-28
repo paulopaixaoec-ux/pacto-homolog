@@ -3,7 +3,7 @@
    NUNCA intercepta nem guarda chamadas da API (Supabase / pacto-api), tokens, comprovantes ou dados financeiros:
    pedidos de outra origem e pedidos que não são GET passam direto para a rede. */
 'use strict';
-const VERSION = '8.2.1-int.2';
+const VERSION = '8.2.1-int.3';
 const CACHE = 'pactox-shell-' + VERSION;
 const ASSETS = [
 "./",
